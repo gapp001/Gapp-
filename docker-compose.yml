@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: web
+    command: uvicorn application.main:app
+    env_file:
+      - ./.env
+    expose:
+      - 8000
+    restart: always
