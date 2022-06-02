@@ -8,7 +8,7 @@ from stellar_sdk.exceptions import BadRequestError, BadResponseError
 from application.choices import (StellarStatus, TransactionKind,
                                  TransactionStatus)
 from application.schemas import (GATransactionSchema, GAUserSchema,
-                                 StellarPaymentTransactionSchema)
+                                 StellarPaymentTransactionSchema, TransactionResultSchema)
 from conf.settings import settings
 
 
@@ -68,13 +68,12 @@ def get_or_create_stellar_account(related_user: GAUserSchema,
                                   issuing_keypair: Keypair,
                                   issuer: Account,
                                   base_fee: int,
-                                  asset: Asset) -> str:
+                                  asset: Asset) -> Keypair:
     '''
     Проверяем, есть ли у получателя публичный ключ Stellar.
     Если нет, то создаем для получаетля новый аккаунт,
     пополняем его и создаем линию доверия к нашему активу gaNGN.
     '''
-    # TODO: Реализовать сохранение публичного и зашифрованного секретного ключей пользователя в бд
     receiving_public_key = related_user.stellar_public_key
     if not receiving_public_key:
         receiving_keypair = Keypair.random()
@@ -96,8 +95,8 @@ def get_or_create_stellar_account(related_user: GAUserSchema,
         server.submit_transaction(stellar_transaction)
         # Create trustline between issuer and receiver (for test)
         change_trust_operation(server, receiving_keypair, base_fee, asset)
-        receiving_public_key = receiving_keypair.public_key
-    return receiving_public_key
+        return receiving_keypair
+    return Keypair.from_public_key(receiving_public_key)
 
 
 def send_transaction_to_stellar(transaction: GATransactionSchema,
@@ -105,12 +104,12 @@ def send_transaction_to_stellar(transaction: GATransactionSchema,
                                 issuing_keypair: Keypair,
                                 issuer: Account,
                                 base_fee: int,
-                                asset: Asset) -> GATransactionSchema:
+                                asset: Asset) -> TransactionResultSchema:
     '''
     Send asset from issuing accout to receiving account.
     Основная функция, которая создает, подписывает и отправляет транзакцию в сеть Stellar.
     '''
-    receiving_public_key = get_or_create_stellar_account(
+    receiving_keypair = get_or_create_stellar_account(
         related_user=transaction.related_user,
         server=server,
         issuing_keypair=issuing_keypair,
@@ -128,7 +127,7 @@ def send_transaction_to_stellar(transaction: GATransactionSchema,
             base_fee=base_fee,
         )
         .append_payment_op(
-            destination=receiving_public_key,
+            destination=receiving_keypair.public_key,
             asset=asset,
             amount=transaction.amount
         )
@@ -136,18 +135,21 @@ def send_transaction_to_stellar(transaction: GATransactionSchema,
         .build()
     )
 
+    transaction_result = TransactionResultSchema(
+        transaction_id=transaction.id,
+        public_key=receiving_keypair.public_key,
+        secret_key=receiving_keypair.secret
+    )
     try:
         # Sign this transaction with the issuer secret key
         stellar_transaction.sign(issuing_keypair)
         # Submit the transaction to the Horizon server.
         response = StellarPaymentTransactionSchema(**server.submit_transaction(stellar_transaction))
-        transaction.related_user.stellar_public_key = receiving_public_key
-        transaction.stellar_status = StellarStatus.CONFIRMED
-        transaction.stellar_transaction_hash = response.hash
-        transaction.stellar_transaction_status = 200
-        transaction.stellar_transaction_detail = 'Success'
+        transaction_result.stellar_transaction_hash = response.hash
+        transaction_result.stellar_transaction_status = 200
+        transaction_result.stellar_transaction_detail = 'Success'
     except (BadRequestError, BadResponseError) as e:
-        transaction.stellar_transaction_status = e.status
-        transaction.stellar_transaction_detail = e.detail
+        transaction_result.stellar_transaction_status = e.status
+        transaction_result.stellar_transaction_detail = e.detail
 
-    return transaction
+    return transaction_result

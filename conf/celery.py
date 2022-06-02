@@ -54,7 +54,7 @@ def configure_credentials_from_django():
 
 
 @celery.task()
-def send_transaction_result_to_django():
+def set_transaction_result_into_redis():
     conn = get_redis_pool_for_celery_task()
     timeout = 8.0
     with requests.Session() as session:
@@ -65,7 +65,6 @@ def send_transaction_result_to_django():
             access_token=credentials.access_token
         )
 
-        transactions_results = []
         server = Server(horizon_url=settings.HORIZON_URL)
         # Fetch issuing keypair from secret key.
         issuing_keypair = Keypair.from_secret(secret=settings.ISSUER_SECRET_KEY)
@@ -75,21 +74,39 @@ def send_transaction_result_to_django():
         base_fee = server.fetch_base_fee()
         # Create an object to represent the new asset
         asset = Asset(settings.ASSET_CODE, issuing_keypair.public_key)
-        for transaction in transactions:
-            transaction = send_transaction_to_stellar(
-                transaction=transaction,
-                server=server,
-                issuing_keypair=issuing_keypair,
-                issuer=issuer,
-                base_fee=base_fee,
-                asset=asset
-            )
-            transactions_results.append(transaction.json())
+        with conn.pipeline(transaction=True) as pipe:
+            for transaction in transactions:
+                transaction_result = send_transaction_to_stellar(
+                    transaction=transaction,
+                    server=server,
+                    issuing_keypair=issuing_keypair,
+                    issuer=issuer,
+                    base_fee=base_fee,
+                    asset=asset
+                )
+                pipe.hset(
+                    'transactions',
+                    transaction_result.transaction_id,
+                    transaction_result.json()
+                )
+            pipe.execute()
+            pipe.reset()
 
+    return {'success': True}
+
+
+@celery.task()
+def send_transaction_result_to_django():
+    conn = get_redis_pool_for_celery_task()
+    timeout = 8.0
+    with requests.Session() as session:
+        transactions = conn.hgetall('transactions')
+        credentials = get_credentials_from_redis(conn=conn, session=session, timeout=timeout)
         response = session.post(
             url=f'{settings.DJANGO_DOMAIN}/stellar_microservice/transactions/',
             headers={'Authorization': f'Bearer {credentials.access_token}'},
-            json=transactions_results
+            json=transactions,
         )
         response.raise_for_status()
+        conn.hdel('transactions', *transactions.keys())
         return response.json()

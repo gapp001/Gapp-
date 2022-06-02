@@ -61,22 +61,29 @@ class GATransactionDetailingSchema(BaseModel):
 
 
 class GATransactionSchema(BaseModel):
-    id: str
+    id: int
     debit_subject: GASubjectSchema | None
     credit_subject: GASubjectSchema | None
-    type_transaction: str
-    transaction_status: str
-    stellar_status: str
-    stellar_transaction_status: int | None
-    stellar_transaction_detail: str | None
+    type_transaction: int
+    transaction_status: int
+    stellar_status: int
     stellar_transaction_hash: str | None
     is_internal_transfer: bool
     amount_currency: str
     amount: Decimal
     national_currency_amount: Decimal
-    created_at: str
+    created_at: datetime
     detailing: GATransactionDetailingSchema | None
     hash_str: str | None
-    kind: str
+    kind: int
     related_user: GAUserSchema
     wallet: int | None
+
+
+class TransactionResultSchema(BaseModel):
+    transaction_id: int
+    public_key: str
+    secret_key: str | None
+    stellar_transaction_hash: str | None
+    stellar_transaction_status: int | None
+    stellar_transaction_detail: str | None
