@@ -87,3 +87,12 @@ class TransactionResultSchema(BaseModel):
     stellar_transaction_hash: str | None
     stellar_transaction_status: int | None
     stellar_transaction_detail: str | None
+
+
+class GAStellarAccountSchema(BaseModel):
+    pk: int
+    user_id: int
+    public_key: str
+    status: str
+    created_at: str
+

@@ -12,6 +12,7 @@ WORKDIR /app
 
 COPY poetry.lock pyproject.toml ./
 
-RUN poetry config virtualenvs.create false && poetry install --no-interaction --no-dev --no-ansi
+RUN poetry export --without-hashes -f requirements.txt --output requirements.txt \
+    && pip install -r requirements.txt --no-cache
 
 ADD . /app/

@@ -7,10 +7,24 @@ from stellar_sdk.exceptions import BadRequestError, BadResponseError
 
 from application.choices import (StellarStatus, TransactionKind,
                                  TransactionStatus)
-from application.schemas import (GATransactionSchema, GAUserSchema,
+from application.schemas import (GATransactionSchema, GAUserSchema, GAStellarAccountSchema,
                                  StellarPaymentTransactionSchema, TransactionResultSchema)
 from conf.settings import settings
 
+
+def get_stellar_accounts_from_django(session: requests.Session,
+                                 timeout: float,
+                                 access_token: str) -> List[GAStellarAccountSchema]:
+    """
+        Method for retrieving a list of StellarAccount objects from Django-server
+    """
+    response = session.get(
+        url=f'{settings.DJANGO_DOMAIN}/stellar/account-list/',
+        headers={'Authorization': f'Bearer {access_token}'},
+        timeout=timeout
+    )
+    response.raise_for_status()
+    return [GAStellarAccountSchema(**account) for account in response.json()]
 
 def get_transactions_from_django(session: requests.Session,
                                  timeout: float,
@@ -63,7 +77,8 @@ def change_trust_operation(server: Server,
     return None
 
 
-def get_or_create_stellar_account(related_user: GAUserSchema,
+
+def get_or_create_stellar_account(stellar_public_key: str,
                                   server: Server,
                                   issuing_keypair: Keypair,
                                   issuer: Account,
@@ -74,7 +89,7 @@ def get_or_create_stellar_account(related_user: GAUserSchema,
     Если нет, то создаем для получаетля новый аккаунт,
     пополняем его и создаем линию доверия к нашему активу gaNGN.
     '''
-    receiving_public_key = related_user.stellar_public_key
+    receiving_public_key = stellar_public_key
     if not receiving_public_key:
         receiving_keypair = Keypair.random()
         stellar_transaction = (
@@ -110,7 +125,7 @@ def send_transaction_to_stellar(transaction: GATransactionSchema,
     Основная функция, которая создает, подписывает и отправляет транзакцию в сеть Stellar.
     '''
     receiving_keypair = get_or_create_stellar_account(
-        related_user=transaction.related_user,
+        stellar_public_key=transaction.related_user,
         server=server,
         issuing_keypair=issuing_keypair,
         issuer=issuer,

@@ -1,4 +1,4 @@
-version: '3.8'
+version: '3.6'
 
 services:
   web:
@@ -9,4 +9,41 @@ services:
       - ./.env
     expose:
       - 8000
+    restart: always
+
+  redis:
+    container_name: redis
+    command: redis-server /usr/local/etc/redis/redis.conf
+    image: redis:6-alpine
+    volumes:
+      - ./redis/data:/redis/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
+      - ./redis/log:/root/redis/log
+    logging:
+      options:
+        max-size: 10m
+    expose:
+      - 6379
+    restart: unless-stopped
+
+  celery:
+    build: .
+    container_name: celery
+    command: celery -A conf worker --concurrency 3 -l INFO 
+    env_file:
+      - ./.env
+    depends_on:
+      - web
+      - redis
+    restart: always
+
+  celery-beat:
+    build: .
+    container_name: celery-beat
+    command: celery -A conf beat -l INFO
+    env_file:
+      - ./.env
+    depends_on:
+      - web
+      - redis
     restart: always
