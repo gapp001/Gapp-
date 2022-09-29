@@ -1,4 +1,6 @@
+import random
 import time
+from typing import Any, Dict, List
 import requests
 from celery import Celery
 from stellar_sdk import Asset, Keypair, Server
@@ -7,11 +9,11 @@ from application.credentials import (get_credentials_from_django,
                                      get_credentials_from_redis,
                                      get_refreshed_credentials_from_django,
                                      set_credentials_into_redis)
-from application.schemas import DjangoAuthCredentials
-from application.utils import (get_stellar_accounts_from_django, get_transactions_from_django,
+from application.schemas import DjangoAuthCredentials, GAStellarAccountBoundedSchema, StellarAccountStatus
+from application.utils import (get_stellar_accounts_from_django, get_transactions_from_django, send_stellar_accounts_to_django,
                                send_transaction_to_stellar)
 from redis import Redis
-from conf.redis import RDB, task_blocker
+from conf.redis import RDB, celery_blocker, task_blocker
 from conf.settings import settings
 
 
@@ -30,7 +32,7 @@ def setup_periodic_tasks(sender, **kwargs):
         name='Configure django credentials every 55 minutes'
     )
     sender.add_periodic_task(
-        1.0,
+        5.0,
         get_stellar_accounts_from_django_task.s(),
         name=f'Retrieving StellarAccount objects every 1 seconds'
     )
@@ -41,42 +43,114 @@ def setup_periodic_tasks(sender, **kwargs):
     # )
 
 
-    
+# @app.task()
 @app.task(name='get_stellar_accounts_from_django_task')
 @task_blocker(task_key='get_stellar_accounts_from_django_task')
-def get_stellar_accounts_from_django_task(conn: Redis):
+def get_stellar_accounts_from_django_task(conn=None):
     """
         Function for retrieving `StellarAccount` objects 
         with status `keypair_generated` from Django-server
     """
-    print('Started task get_stellar_accounts_from_django_task')
-    timeout = 8.0
-    
+    # print('Started task get_stellar_accounts_from_django_task')
+    timeout = 88.0
+    conn = conn or RDB.get_redis_pool_for_celery_task()
     with requests.Session() as session:
-        credentials: DjangoAuthCredentials = get_credentials_from_redis(conn=conn, session=session, timeout=timeout)
+        credentials: DjangoAuthCredentials = get_credentials_from_redis(
+            conn=conn, session=session, timeout=timeout)
         stellar_accounts = get_stellar_accounts_from_django(
             session=session,
             timeout=timeout,
             access_token=credentials.access_token
         )
-        print(f'{stellar_accounts=}')
+        request_data: List[Dict[str, Any]] = []
+        
+        for account in stellar_accounts:
+            request_data.append(
+                GAStellarAccountBoundedSchema(
+                    pk=account.pk,
+                    status=str(StellarAccountStatus.fulfilled.value),
+                ).__dict__
+            )
+            print(f'Append Account with pk {account.pk}. Go to sleep 10 sec')
+            time.sleep(10)
+
+            # TODO implement here logic of creation stellar accounts
+
+        send_stellar_accounts_to_django(
+            session=session,
+            timeout=timeout,
+            access_token=credentials.access_token,
+            data=request_data,
+        )
+            # print(f'{stellar_accounts=}')
     print('Finished task get_stellar_accounts_from_django_task\n')
-    time.sleep(10)
+
+
+# # @app.task(name='get_stellar_accounts_from_django_task')
+# # @task_blocker(task_key='get_stellar_accounts_from_django_task')
+# @app.task()
+# def get_stellar_accounts_from_django_task():
+#     """
+#         Function for retrieving `StellarAccount` objects
+#         with status `keypair_generated` from Django-server
+#     """
+#     # print('Started task get_stellar_accounts_from_django_task')
+#     with celery_blocker(task_key='get_stellar_accounts_from_django_task') as blocker:
+#         print(f'{blocker.can_start_task=}')
+#         print(f'{blocker.conn=}')
+#         if not blocker.can_start_task:
+#             print('TASK IS LOCKED')
+#             return
+#         timeout = 8.0
+
+#         with requests.Session() as session:
+#             credentials: DjangoAuthCredentials = get_credentials_from_redis(conn=blocker.conn, session=session, timeout=timeout)
+#             stellar_accounts = get_stellar_accounts_from_django(
+#                 session=session,
+#                 timeout=timeout,
+#                 access_token=credentials.access_token
+#             )
+#             request_data: List[Dict[str, Any]] = []
+        
+#             for account in stellar_accounts:
+#                 request_data.append(
+#                     GAStellarAccountBoundedSchema(
+#                         pk=account.pk,
+#                         status=str(StellarAccountStatus.fulfilled.value),
+#                     ).__dict__
+#                 )
+#                 print(f'Append Account with pk {account.pk}. Go to sleep 10 sec')
+#                 time.sleep(10)
+
+#                 # TODO implement here logic of creation stellar accounts
+
+#             send_stellar_accounts_to_django(
+#                 session=session,
+#                 timeout=timeout,
+#                 access_token=credentials.access_token,
+#                 data=request_data,
+#             )
+#             # print(f'{stellar_accounts=}')
+#     print('Finished task get_stellar_accounts_from_django_task\n')
+
+
+        # time.sleep(10)
 
 
 @app.task(
-    name='configure_credentials_from_django',
+    # name='configure_credentials_from_django',
     autoretry_for=(requests.HTTPError,),
     max_retries=53,
     default_retry_delay=60)
-@task_blocker(task_key='configure_credentials_from_django')
+# @task_blocker(task_key='configure_credentials_from_django')
 def configure_credentials_from_django(conn: Redis):
     timeout = 8.0
     with requests.Session() as session:
         access_token = conn.get('access_token')
         refresh_token = conn.get('refresh_token')
         if not access_token:
-            credentials = get_credentials_from_django(session=session, timeout=timeout)
+            credentials = get_credentials_from_django(
+                session=session, timeout=timeout)
             set_credentials_into_redis(conn=conn, credentials=credentials)
             return {'success': True, 'updated': False}
         credentials = get_refreshed_credentials_from_django(
@@ -94,7 +168,8 @@ def set_transaction_result_into_redis():
     conn = RDB.get_redis_pool_for_celery_task()
     timeout = 8.0
     with requests.Session() as session:
-        credentials = get_credentials_from_redis(conn=conn, session=session, timeout=timeout)
+        credentials = get_credentials_from_redis(
+            conn=conn, session=session, timeout=timeout)
         transactions = get_transactions_from_django(
             session=session,
             timeout=timeout,
@@ -104,7 +179,8 @@ def set_transaction_result_into_redis():
         server = Server(horizon_url=settings.HORIZON_URL)
         # Fetch issuing keypair from secret key.
         # Получили пару ключей инициатора - Root Аккаунт
-        issuing_keypair = Keypair.from_secret(secret=settings.ISSUER_SECRET_KEY)
+        issuing_keypair = Keypair.from_secret(
+            secret=settings.ISSUER_SECRET_KEY)
         # Fetch the current sequence number for the source account from Horizon.
         # Получаем по публичному ключу данные аккаунта
         issuer = server.load_account(issuing_keypair.public_key)
@@ -144,7 +220,8 @@ def send_transaction_result_to_django():
     timeout = 8.0
     with requests.Session() as session:
         transactions = conn.hgetall('transactions')
-        credentials = get_credentials_from_redis(conn=conn, session=session, timeout=timeout)
+        credentials = get_credentials_from_redis(
+            conn=conn, session=session, timeout=timeout)
         response = session.post(
             url=f'{settings.DJANGO_DOMAIN}/stellar_microservice/transactions/',
             headers={'Authorization': f'Bearer {credentials.access_token}'},

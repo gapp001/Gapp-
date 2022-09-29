@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from typing import List
-
+from enum import Enum
 from pydantic import BaseModel
 
 
@@ -95,4 +95,14 @@ class GAStellarAccountSchema(BaseModel):
     public_key: str
     status: str
     created_at: str
+
+
+class StellarAccountStatus(Enum):
+    not_created = 'not_created'
+    keypair_generated = 'keypair_generated'
+    fulfilled = 'fulfilled'
+
+class GAStellarAccountBoundedSchema(BaseModel):
+    pk: int
+    status: str
 

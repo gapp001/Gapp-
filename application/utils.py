@@ -1,4 +1,4 @@
-from typing import List
+from typing import Any, Dict, List
 
 import requests
 from stellar_sdk import (Account, Asset, Keypair, Network, Server,
@@ -25,6 +25,22 @@ def get_stellar_accounts_from_django(session: requests.Session,
     )
     response.raise_for_status()
     return [GAStellarAccountSchema(**account) for account in response.json()]
+
+def send_stellar_accounts_to_django(session: requests.Session,
+                                 timeout: float,
+                                 access_token: str, data: List[Dict[str, Any]]) -> int:
+    """
+        Method for sending a list of StellarAccount objects with updated statuses to Django-server
+    """
+    response = session.post(
+        url=f'{settings.DJANGO_DOMAIN}/stellar/account-list/update-status/',
+        json=data,
+        headers={'Authorization': f'Bearer {access_token}'},
+        timeout=timeout
+    )
+    response.raise_for_status()
+    return response.status_code
+
 
 def get_transactions_from_django(session: requests.Session,
                                  timeout: float,
