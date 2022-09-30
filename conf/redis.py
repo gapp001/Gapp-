@@ -63,11 +63,9 @@ class RDB:
                 # Let's just get the value they changed it to.
                 return pipe.get(key)
 
-def task_blocker(task_key: str, ttl: float = 120.0):
+def task_blocker(task_key: str, key_ttl: float = 120.0):
     """Decoration function for using blocking running celery task"""
     conn = RDB.get_redis_pool_for_celery_task()
-    def do_nothing():...
-
     def decorator(function: Callable):
         def wrapper(*args, **kwargs):
             task_status: str = RDB.get_task_status(task_key=task_key, conn=conn)
@@ -78,12 +76,12 @@ def task_blocker(task_key: str, ttl: float = 120.0):
             
             else:
                 # Setting to Redis that the celery task are running
-                RDB.set_task_status(task_key=task_key, ttl=ttl, conn=conn)
-            # Running Celery task
+                RDB.set_task_status(task_key=task_key, ttl=key_ttl, conn=conn)
             kwargs.update(conn=conn)
             try:
+                # Running Celery task
                 # Blocking running task if prev task not completed
-                result: Any = function(*args, **kwargs) if can_start_task else do_nothing()
+                result: Any = function(*args, **kwargs) if can_start_task else None
                 return result
             finally:
                 if can_start_task:

@@ -9,6 +9,7 @@ from application.credentials import (get_credentials_from_django,
                                      get_credentials_from_redis,
                                      get_refreshed_credentials_from_django,
                                      set_credentials_into_redis)
+from application.repositories.django_repository import DjangoRepository
 from application.schemas import DjangoAuthCredentials, GAStellarAccountBoundedSchema, StellarAccountStatus
 from application.utils import (get_stellar_accounts_from_django, get_transactions_from_django, send_stellar_accounts_to_django,
                                send_transaction_to_stellar)
@@ -45,14 +46,13 @@ def setup_periodic_tasks(sender, **kwargs):
 
 # @app.task()
 @app.task(name='get_stellar_accounts_from_django_task')
-@task_blocker(task_key='get_stellar_accounts_from_django_task')
+@task_blocker(task_key='get_stellar_accounts_from_django_task', key_ttl=300)
 def get_stellar_accounts_from_django_task(conn=None):
     """
         Function for retrieving `StellarAccount` objects 
         with status `keypair_generated` from Django-server
     """
-    # print('Started task get_stellar_accounts_from_django_task')
-    timeout = 88.0
+    timeout = 8.0
     conn = conn or RDB.get_redis_pool_for_celery_task()
     with requests.Session() as session:
         credentials: DjangoAuthCredentials = get_credentials_from_redis(
@@ -65,16 +65,16 @@ def get_stellar_accounts_from_django_task(conn=None):
         request_data: List[Dict[str, Any]] = []
         
         for account in stellar_accounts:
+            # TODO implement here logic of creation stellar accounts
+            time.sleep(10)
             request_data.append(
                 GAStellarAccountBoundedSchema(
                     pk=account.pk,
-                    status=str(StellarAccountStatus.fulfilled.value),
+                    status=str(StellarAccountStatus.need_trustline.value),
                 ).__dict__
             )
             print(f'Append Account with pk {account.pk}. Go to sleep 10 sec')
-            time.sleep(10)
 
-            # TODO implement here logic of creation stellar accounts
 
         send_stellar_accounts_to_django(
             session=session,
@@ -153,7 +153,7 @@ def configure_credentials_from_django(conn: Redis):
                 session=session, timeout=timeout)
             set_credentials_into_redis(conn=conn, credentials=credentials)
             return {'success': True, 'updated': False}
-        credentials = get_refreshed_credentials_from_django(
+        credentials = DjangoRepository.get_refreshed_credentials(
             session=session,
             timeout=timeout,
             access_token=access_token,

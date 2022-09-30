@@ -100,6 +100,7 @@ class GAStellarAccountSchema(BaseModel):
 class StellarAccountStatus(Enum):
     not_created = 'not_created'
     keypair_generated = 'keypair_generated'
+    need_trustline = 'need_trustline'
     fulfilled = 'fulfilled'
 
 class GAStellarAccountBoundedSchema(BaseModel):

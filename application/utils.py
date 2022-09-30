@@ -12,19 +12,19 @@ from application.schemas import (GATransactionSchema, GAUserSchema, GAStellarAcc
 from conf.settings import settings
 
 
-def get_stellar_accounts_from_django(session: requests.Session,
-                                 timeout: float,
-                                 access_token: str) -> List[GAStellarAccountSchema]:
-    """
-        Method for retrieving a list of StellarAccount objects from Django-server
-    """
-    response = session.get(
-        url=f'{settings.DJANGO_DOMAIN}/stellar/account-list/',
-        headers={'Authorization': f'Bearer {access_token}'},
-        timeout=timeout
-    )
-    response.raise_for_status()
-    return [GAStellarAccountSchema(**account) for account in response.json()]
+# def get_stellar_accounts_from_django(session: requests.Session,
+#                                  timeout: float,
+#                                  access_token: str) -> List[GAStellarAccountSchema]:
+#     """
+#         Method for retrieving a list of StellarAccount objects from Django-server
+#     """
+#     response = session.get(
+#         url=f'{settings.DJANGO_DOMAIN}/stellar/account-list/',
+#         headers={'Authorization': f'Bearer {access_token}'},
+#         timeout=timeout
+#     )
+#     response.raise_for_status()
+#     return [GAStellarAccountSchema(**account) for account in response.json()]
 
 def send_stellar_accounts_to_django(session: requests.Session,
                                  timeout: float,
