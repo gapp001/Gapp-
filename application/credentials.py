@@ -35,8 +35,8 @@ from conf.settings import settings
 
 def set_credentials_into_redis(conn: redis.Redis, credentials: DjangoAuthCredentials):
     with conn.pipeline(transaction=True) as pipe:
-        pipe.set('access_token', credentials.access_token)
-        pipe.set('refresh_token', credentials.refresh_token)
+        pipe.set('access_token', credentials.access_token, ex=settings.DJANGO_CREDENTIALS_TTL * 60)
+        pipe.set('refresh_token', credentials.refresh_token, ex=settings.DJANGO_CREDENTIALS_TTL * 60)
         pipe.execute()
         pipe.reset()
 

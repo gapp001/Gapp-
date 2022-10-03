@@ -83,7 +83,7 @@ class GATransactionSchema(BaseModel):
 class TransactionResultSchema(BaseModel):
     transaction_id: int
     public_key: str
-    secret_key: str | None
+    # secret_key: str | None
     stellar_transaction_hash: str | None
     stellar_transaction_status: int | None
     stellar_transaction_detail: str | None
@@ -96,12 +96,6 @@ class GAStellarAccountSchema(BaseModel):
     status: str
     created_at: str
 
-
-class StellarAccountStatus(Enum):
-    not_created = 'not_created'
-    keypair_generated = 'keypair_generated'
-    need_trustline = 'need_trustline'
-    fulfilled = 'fulfilled'
 
 class GAStellarAccountBoundedSchema(BaseModel):
     pk: int

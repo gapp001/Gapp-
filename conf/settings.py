@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     # FastAPI cofigurations
     APP_PREFIX: str
 
+    DJANGO_CREDENTIALS_TTL: int # in minutes
     # Stellar cofigurations
     HORIZON_URL: str
     DEFAULT_TIMEOUT: int

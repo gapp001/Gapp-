@@ -1,4 +1,5 @@
 from dataclasses import dataclass, fields
+from enum import Enum
 
 
 @dataclass
@@ -51,15 +52,21 @@ class TransactionStatus:
             continue
 
 @dataclass
-class StellarStatus:
+class StellarTransactionStatus:
     CONFIRMED: int = 1
     UNCONFIRMED: int = 2
 
     def __init__(self):
-        self.CHOICES = [(field.default, field.name) for field in fields(StellarStatus)]
+        self.CHOICES = [(field.default, field.name) for field in fields(StellarTransactionStatus)]
 
     def get_choice_label_by_value(self, value: int) -> str:
         for choice in self.CHOICES:
             if value in choice:
                 return choice[1]
             continue
+
+class StellarAccountStatus(Enum):
+    not_created = 'not_created'
+    keypair_generated = 'keypair_generated'
+    need_trustline = 'need_trustline'
+    fulfilled = 'fulfilled'
