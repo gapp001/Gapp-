@@ -1,8 +1,9 @@
+from decimal import Decimal
 import random
 import requests
 from redis import Redis
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from stellar_sdk.asset import Asset
 from stellar_sdk.keypair import Keypair
 from stellar_sdk.network import Network
@@ -10,9 +11,10 @@ from stellar_sdk.server import Server
 from stellar_sdk.account import Account
 from stellar_sdk.exceptions import NotFoundError
 from application.repositories.stellar_repository import StellarRepository
-from application.schemas import TransactionResultSchema
+from application.schemas import StellarPaymentTransactionSchema, TransactionResultSchema
 from conf.celery import get_stellar_accounts_from_django_task, send_updated_stellar_accounts_to_django
 from conf.redis import RDB
+from conf.settings import settings
 
 
 @dataclass
@@ -23,10 +25,26 @@ class ConstantsDTO:
     DEFAULT_TIMEOUT: int = 31536000  # One year in seconds
 
     # Recipient's keypair
-    RECIPIENT_PUBLIC_KEY: str = 'GCAFT4KTT5CG72E57ATGYLQFVDXNBGYNKNS7XYI73ZPSOLGOGJIA4R4R'
-    RECIPIENT_SECRET_KEY: str = 'SDZAFQQDWGKUNSAFOCCODFHGKAG6A6HHKCTRY2L3RACDR2RY4B54K6FQ'
+    RECIPIENT_1_PUBLIC_KEY: str = 'GCAFT4KTT5CG72E57ATGYLQFVDXNBGYNKNS7XYI73ZPSOLGOGJIA4R4R'
+    RECIPIENT_1_SECRET_KEY: str = 'SDZAFQQDWGKUNSAFOCCODFHGKAG6A6HHKCTRY2L3RACDR2RY4B54K6FQ'
+    RECIPIENT_2_PUBLIC_KEY: str = 'GD435GSIGYGYBA2YC5TFM3IAUSILSUDEICBGQBSJHFCA4SFMRPWYATMY'
+    RECIPIENT_2_SECRET_KEY: str = 'SDYU5RMG665JGLS5KPEM3D4DFWWKL4SBVICPIQHXGYPO66H2REXCOAP5'
 
     GA_NGNG_ASSET_CODE: str = 'gaNGN'
+
+
+def get_issuer_account(server: Server) -> Account:
+    issuer_keypair: Keypair = Keypair.from_secret(
+        ConstantsDTO.ROOT_ISSUER_SECRET_KEY)
+    try:
+        return server.load_account(issuer_keypair.public_key)
+    except NotFoundError:
+        print('Issuer Account not found. Creating account...')
+        is_root_account_created: bool = create_root_account(
+            public_key=issuer_keypair.public_key)
+        if is_root_account_created:
+            return server.load_account(issuer_keypair.public_key)
+        raise Exception('Creation account error')
 
 
 def create_root_account(public_key: Optional[str] = None) -> bool:
@@ -35,31 +53,23 @@ def create_root_account(public_key: Optional[str] = None) -> bool:
     return _response.get('success')
 
 
-def create_stellar_account_case():
-    server = Server(horizon_url=ConstantsDTO.TESTNET)
-    base_fee: int = server.fetch_base_fee()
-
-    issuer_keypair: Keypair = Keypair.from_secret(
-        ConstantsDTO.ROOT_ISSUER_SECRET_KEY)
+def get_or_create_stellar_account(server: Server, recipient_public_key: str, issuer_account: Account, issuer_keypair: Keypair) -> Account:
     try:
-        issuer_account: Account = server.load_account(
-            issuer_keypair.public_key)
-    except NotFoundError:
-        print('Issuer Account not found. Creating account...')
-        is_root_account_created: bool = create_root_account(
-            public_key=issuer_keypair.public_key)
-    try:
-        recipient_account: Account = server.load_account(
-            ConstantsDTO.RECIPIENT_PUBLIC_KEY)
+        account: Account = server.load_account(recipient_public_key)
+        # print('Account was created earlier')
+        return account
     except NotFoundError:
         is_recipient_account_created: Dict[str, Any] = StellarRepository.create_stellar_account(
             server=server,
-            recipient_public_key=ConstantsDTO.RECIPIENT_PUBLIC_KEY,
+            recipient_public_key=recipient_public_key,
             issuer_keypair=issuer_keypair,
             issuer_account=issuer_account,
             base_fee=base_fee,
         )
-    print(f'{is_recipient_account_created=}')
+        if is_recipient_account_created:
+            print('Account has created now')
+            return server.load_account(recipient_public_key)
+        raise Exception('Creation account error')
 
 
 def set_transactions_to_redis():
@@ -81,17 +91,163 @@ def set_transactions_to_redis():
             )
         pipe.execute()
         pipe.reset()
-    
+
     transactions = conn.hgetall('transactions')
-    
+
     print(f'{transactions.values()=}')
 
 
+def create_trustline(server: Server, recipient_keypair: Keypair, base_fee: int, asset: Asset):
+    return StellarRepository.change_trust_operation(
+        server=server,
+        recipient_keypair=recipient_keypair,
+        base_fee=base_fee,
+        asset=asset,
+    )
+
+
+
 if __name__ == "__main__":
-    # create_stellar_account_case()
-    # set_transactions_to_redis()
-    get_stellar_accounts_from_django_task()
+    # get_stellar_accounts_from_django_task()
     send_updated_stellar_accounts_to_django()
+    # server = Server(horizon_url=ConstantsDTO.TESTNET)
+
+    # base_fee: int = server.fetch_base_fee()
+    # issuer_keypair: Keypair = Keypair.from_secret(
+    #     ConstantsDTO.ROOT_ISSUER_SECRET_KEY)
+    # issuer_account = get_issuer_account(server=server)
+    # asset = Asset(
+    #     code=ConstantsDTO.GA_NGNG_ASSET_CODE,
+    #     issuer=issuer_keypair.public_key
+    # )
+
+    # Recipient Account #1 ↓
+    # account_1: Account = get_or_create_stellar_account(
+    #     server=server,
+    #     recipient_public_key=ConstantsDTO.RECIPIENT_1_PUBLIC_KEY,
+    #     issuer_keypair=issuer_keypair,
+    #     issuer_account=issuer_account,
+    # )
+
+    # account_1_balances: List[Dict[str, Any]
+    #                          ] = account_1.raw_data.get('balances')
+    # print('Account 1 Balances')
+
+    # for balance in account_1_balances:
+
+    #     print(f'_____\n{balance}\nimage.png_____\n')
+
+    # Recipient Account #1 ↑
+    # account_1_keypair = Keypair.from_secret(
+    #     ConstantsDTO.RECIPIENT_1_SECRET_KEY)
+
+    # created_trustline = create_trustline(
+    #     server=server,
+    #     recipient_keypair=account_1_keypair,
+    #     base_fee=base_fee,
+    #     asset=asset,
+    # )
+    
+    # print(account_1.__dict__)
+
+    # Recipient Account #2 ↓
+    # account_2: Account = get_or_create_stellar_account(
+    #     server=server,
+    #     recipient_public_key=ConstantsDTO.RECIPIENT_2_PUBLIC_KEY,
+    #     issuer_keypair=issuer_keypair,
+    #     issuer_account=issuer_account,
+    # )
+    # print('\nAccount 2 Balances')
+    # account_2_balances: List[Dict[str, Any]
+    #                          ] = account_2.raw_data.get('balances')
+    # for balance in account_2_balances:
+
+    #     print(f'_____\n{balance}\n_____\n')
+    # Recipient Account #2 ↑
+    # print()
+    # print(created_trustline)
+    # print()
+    # print(account_1.__dict__)
+    # print()
+    # print()
+    # account_2_keypair = Keypair.from_secret(
+    #     ConstantsDTO.RECIPIENT_2_SECRET_KEY)
+
+    # payment_operation: StellarPaymentTransactionSchema =  StellarRepository.send_transaction(
+    #     amount=Decimal('500.00'),
+    #     recipient_public_key=account_2_keypair.public_key,
+    #     issuer_account=account_1,
+    #     issuer_keypair=account_1_keypair,
+    #     server=server,
+    #     base_fee=base_fee,
+    #     asset=asset,
+    # )
+
+    # payment_operation: StellarPaymentTransactionSchema =  StellarRepository.send_transaction(
+    #     amount=Decimal('500.00'),
+    #     recipient_public_key=account_1_keypair.public_key,
+    #     issuer_account=issuer_account,
+    #     issuer_keypair=issuer_keypair,
+    #     server=server,
+    #     base_fee=base_fee,
+    #     asset=asset,
+    # )
+
+    # print(payment_operation)
+
+    # set_transactions_to_redis()
+    # get_stellar_accounts_from_django_task()
+    # send_updated_stellar_accounts_to_django()
+
+"""
+    payment transaction dict
+
+{
+    'id': '58244dbebf462bc74caaa6c50b670d36463ae8e3b9ce812003b1553bb1559951',
+    'paging_token': '1417493826514944',
+    'successful': True,
+    'hash': '58244dbebf462bc74caaa6c50b670d36463ae8e3b9ce812003b1553bb1559951',
+    'ledger': 330036,
+    'created_at': datetime.datetime(2022, 10, 4, 11, 15, 56, tzinfo = datetime.timezone.utc),
+    'source_account': 'GD4TTQKE3DCGFZ7LEYUFPUEYXLIEUNGPI3JXI7GENPLF2WGF762MGX3L',
+    'source_account_sequence': '1337104923623429',
+    'fee_account': 'GD4TTQKE3DCGFZ7LEYUFPUEYXLIEUNGPI3JXI7GENPLF2WGF762MGX3L',
+    'fee_charged': '100',
+    'max_fee': '100',
+    'operation_count': 1,
+    'envelope_xdr': 'AAAAAgAAAAD5OcFE2MRi5+smKFfQmLrQSjTPRtN0fMRr1l1Yxf+0wwAAAGQABMAXAAAABQAAAAEAAAAAAAAAAAAAAABlHUliAAAAAAAAAAEAAAAAAAAAAQAAAACAWfFTn0Rv6J34JmwuBaju0JsNU2X74R/eXycszjJQDgAAAAJnYU5HTgAAAAAAAAAAAAAA+TnBRNjEYufrJihX0Ji60Eo0z0bTdHzEa9ZdWMX/tMMAAAABKgXyAAAAAAAAAAABxf+0wwAAAEBFGiPT+uoWqjyxSp1QW6+rwcHBXBKJicxUopCABFPmAvafbVxF5wQ7KTukBz57Sf6Z68YyGI8r5ZV+IPZgs6MI',
+    'result_xdr': 'AAAAAAAAAGQAAAAAAAAAAQAAAAAAAAABAAAAAAAAAAA=',
+    'result_meta_xdr': 'AAAAAgAAAAIAAAADAAUJNAAAAAAAAAAA+TnBRNjEYufrJihX0Ji60Eo0z0bTdHzEa9ZdWMX/tMMAAAAXP/iFbAAEwBcAAAAEAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAwAAAAAABQkYAAAAAGM8FVkAAAAAAAAAAQAFCTQAAAAAAAAAAPk5wUTYxGLn6yYoV9CYutBKNM9G03R8xGvWXVjF/7TDAAAAFz/4hWwABMAXAAAABQAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAMAAAAAAAUJNAAAAABjPBXsAAAAAAAAAAEAAAACAAAAAwAFCTIAAAABAAAAAIBZ8VOfRG/onfgmbC4FqO7Qmw1TZfvhH95fJyzOMlAOAAAAAmdhTkdOAAAAAAAAAAAAAAD5OcFE2MRi5+smKFfQmLrQSjTPRtN0fMRr1l1Yxf+0wwAAAAAAAAAAf/////////8AAAABAAAAAAAAAAAAAAABAAUJNAAAAAEAAAAAgFnxU59Eb+id+CZsLgWo7tCbDVNl++Ef3l8nLM4yUA4AAAACZ2FOR04AAAAAAAAAAAAAAPk5wUTYxGLn6yYoV9CYutBKNM9G03R8xGvWXVjF/7TDAAAAASoF8gB//////////wAAAAEAAAAAAAAAAAAAAAA=',
+    'fee_meta_xdr': 'AAAAAgAAAAMABQkYAAAAAAAAAAD5OcFE2MRi5+smKFfQmLrQSjTPRtN0fMRr1l1Yxf+0wwAAABc/+IXQAATAFwAAAAQAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAADAAAAAAAFCRgAAAAAYzwVWQAAAAAAAAABAAUJNAAAAAAAAAAA+TnBRNjEYufrJihX0Ji60Eo0z0bTdHzEa9ZdWMX/tMMAAAAXP/iFbAAEwBcAAAAEAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAwAAAAAABQkYAAAAAGM8FVkAAAAA',
+    'memo_type': 'none',
+    'signatures': ['RRoj0/rqFqo8sUqdUFuvq8HBwVwSiYnMVKKQgART5gL2n21cRecEOyk7pAc+e0n+mevGMhiPK+WVfiD2YLOjCA=='],
+    'valid_after': datetime.datetime(1970, 1, 1, 0, 0, tzinfo = datetime.timezone.utc),
+    'valid_before': datetime.datetime(2023, 10, 4, 11, 15,
+        46, tzinfo = datetime.timezone.utc)
+}
+
+"""
+
+"""
+'_links': {
+    'self': {
+        'href': 'https://horizon-testnet.stellar.org/transactions/9cef5b3fe0e6e340e5a4168384b4441469d1140abd8510238fa762995a326cfd'
+    },
+    'account': {
+        'href': 'https://horizon-testnet.stellar.org/accounts/GCAFT4KTT5CG72E57ATGYLQFVDXNBGYNKNS7XYI73ZPSOLGOGJIA4R4R'
+    },
+    'ledger': {
+        'href': 'https://horizon-testnet.stellar.org/ledgers/329297'
+    },
+    'operations': {
+        'href': 'https://horizon-tesnYU5HTgAAAAAAAAAAAAAATkVAFkZ0whZQeyR89viSMJvXSIwArdaVkmexh1eYgvB//////////wAAAAAAAAABzjJQDgAAAEBhtneIDF8UxM1cW3e7GVvo+zB1tAGwS9wbDNwdJFq/KqnWYIThnfJy21ffects': {
+                'href': 'https://horizon-testnet.sKmJRKBdRAkxJMmGY8fA1e0b0qnm1wP',
+                'result_xdr': 'AAAAAAAAAGQAAAAAAAAAAQAAAAAAAAAGAAAAAAAAAAA=',
+                'result_meta_xdr': 'AAAAAgAAAAIAAAADAAUGUQAAAAAAAAAAgFnx {'
+                href ': '
+                https: //horizon-testnet.stellar.oU59Eb+id+CZsLgWo7tCbDVNl++Ef3l8nLM4yUA4AAAAAB00zPAAEwGgAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAABAAUGUQAAAAAAAAAAgFnxU59Eb+id+CZsLgWo7tCbDVN5675008'}, 'transaction': {'href': 'https://l++Ef3l8nLM4yUA4AAAAAB00zPAAEwGgAAAABAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAwAAAAAABQZRAAAAAGM8BrwAAAAAAAd1140abd8510238fa762995a326cfd', 'paging_tokAAAQAAAAMAAAAAAAUGUQAAAAEAAAAAgFnxU59Eb+id+CZsLgWo7tCbDVNl++Ef3l8nLM4yUA4AAAACZ2FOR04AAAAAAAAAAAAAAE5FQBZGdMIWUHskfPb4kjCb10iMAK3WlZJnsYdXmILwAAAAAAAAA: '2022-10-04T10:11:08Z', 'source_account': AB//////////wAAAAEAAAAAAAAAAAAAAAMABQZRAAAAAAAAAACAWfFTn0Rv6J34JmwuBaju0JsNU2X74R/eXycszjJQDgAAAAAHTTM8AATAaAAAAAEAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAABBGYNKNS7XYI73ZPSOLGOGJIA4R4R', 'fee_charged'AAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAADAAAAAAAFBlEAAAAAYzwGvAAAAAAAAAABAAUGUQAAAAAAAAAAgFnxU59Eb+id+CZsLgWo7tCbDVNl++Ef3l8nLM4yUA4AAAAAB00zPAAAAAAABlHTo1AAAAAAAAAAEAAAAAAAAABgAAAAJnYU5HTEwGgAAAABAAAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAwAAAAAABQZRAAAAAGM8BrwAAAAAAAAAAA==', 'fee_meta_xdr': 'AAdRAkxJMmGY8fA1e0b0qnm1wP', 'result_xdr': 'AAAAAgAAAAMABMBoAAAAAAAAAACAWfFTn0Rv6J34JmwuBaju0JsNU2X74R/eXycszjJQDgAAAAAHTTOgAATAaAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAEABQZRAAAAAAAAAAEwGgAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAACAWfFTn0Rv6J34JmwuBaju0JsNU2X74R/eXycszjJQDgAAAAAHTTM8AATAaAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAA==', 'memo_type': 'none', 'signatures': ['AAAAAACAAAAAAAAAAAAAAAAAAAAAwAAAAAABQZRAAAAAYbZ3iAxfFMTNXFt3uxlb6PswdbQBsEvcGwzcHSRavyqp1mCE4Z3ycttSpiUSgXUQJMSTJhmPHwNXtG9Kp5tcDw=='], 'valid_after': '1970-01-01T00:00:00Z', 'valid_before': '202mILwAAAAAAAAAAB//////////wAAAAEAAAAAAAAAAAAA3-10-04T10:11:01Z', 'preconditions': {'timebounds': {'min_time': '0', 'max_time': '1696414261'}}}
+"""
+
 
 """
 StellarRepository.create_stellar_account response

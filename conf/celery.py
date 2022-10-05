@@ -16,6 +16,7 @@ from redis import Redis
 from conf.exceptions import NoIssuerAccountFound
 from conf.redis import RDB, celery_blocker, task_blocker
 from conf.settings import settings
+from utils.gpg_helper import GPGHelper
 
 
 app = Celery(__name__)
@@ -50,7 +51,7 @@ def setup_periodic_tasks(sender, **kwargs):
 
 
 @app.task(name='get_stellar_accounts_from_django_task')
-@task_blocker(task_key='get_stellar_accounts_from_django_task', key_ttl=300)
+@task_blocker(task_key='get_stellar_accounts_from_django_task', key_ttl=300, can_ignore_block=True)
 def get_stellar_accounts_from_django_task(conn: Redis | None = None):
     """
         Function for retrieving `StellarAccount` objects
@@ -61,7 +62,7 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
     with requests.Session() as session:
         credentials: DjangoAuthCredentials = get_credentials_from_redis(
             conn=conn, session=session, timeout=timeout)
-            
+
         stellar_accounts: List[GAStellarAccountSchema] = DjangoRepository.get_stellar_accounts(
             session=session,
             timeout=timeout,
@@ -79,48 +80,84 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
         if not issuer_account:
             raise NoIssuerAccountFound
 
+        asset: Asset = StellarRepository.get_ga_ngn_asset(
+            issuer_public_key=issuer_keypair.public_key)
         base_fee: int = server.fetch_base_fee()
 
         with conn.pipeline(transaction=True) as pipe:
             for account in stellar_accounts:
+                can_skip_create_operation: bool = False
+
                 # проверь kiss cache
                 existing_account: Account | None = StellarRepository.get_account(
                     server=server,
                     public_key=account.public_key)
                 if existing_account:
+                    account_wallets: List[Dict[str, Any]] = existing_account.raw_data.get(
+                        'balances')
+                    has_trustline: bool = StellarRepository.check_trustline_exists(
+                        account_wallets)
                     # Setting up GAStellarAccountBoundedSchema data to Redis
-                    RDB.set_bounded_stellar_account(
-                        pipe=pipe,
-                        bounded_account=GAStellarAccountBoundedSchema(
-                            pk=account.pk,
-                            status=StellarAccountStatus.need_trustline.value,
-                        ),
+                    if has_trustline:
+                        RDB.set_bounded_stellar_account(
+                            pipe=pipe,
+                            bounded_account=GAStellarAccountBoundedSchema(
+                                pk=account.pk,
+                                status=StellarAccountStatus.fulfilled.value,
+                            ),
+                        )
+                        continue
+                    else:
+                        can_skip_create_operation = True
+                # Decrypting Stellar secret key
+                decrypted_private_key: bytes = GPGHelper.root_key_helper.decrypt_message(
+                    message=account.private_key).data
+
+                if isinstance(decrypted_private_key, bytes):
+                    decrypted_private_key: str = decrypted_private_key.decode()
+
+                if not can_skip_create_operation:
+                    is_created_account: bool = StellarRepository.create_stellar_account(
+                        server=server,
+                        asset=asset,
+                        recipient_public_key=account.public_key,
+                        issuer_keypair=issuer_keypair,
+                        issuer_account=issuer_account,
+                        base_fee=base_fee,
                     )
-                    continue
+                else:
+                    is_created_account = True
 
-                is_created_account: bool = StellarRepository.create_stellar_account(
-                    server=server,
-                    recipient_public_key=account.public_key,
-                    issuer_keypair=issuer_keypair,
-                    issuer_account=issuer_account,
-                    base_fee=base_fee,
-                )
+                if is_created_account:
+                    # Create trustline between issuer and receiver
+                    recipient_keypair = Keypair.from_secret(
+                        decrypted_private_key)
+                    has_created_trustline: bool = StellarRepository.change_trust_operation(
+                        server=server,
+                        recipient_keypair=recipient_keypair,
+                        base_fee=base_fee,
+                        asset=asset,
+                    )
 
-                status: StellarAccountStatus = StellarAccountStatus.need_trustline if is_created_account \
-                    else StellarAccountStatus.keypair_generated
+                    if has_created_trustline:
+                        # Setting up GAStellarAccountBoundedSchema data to Redis
+                        status: StellarAccountStatus = StellarAccountStatus.fulfilled if has_created_trustline \
+                            else StellarAccountStatus.keypair_generated
+                        RDB.set_bounded_stellar_account(
+                            pipe=pipe,
+                            bounded_account=GAStellarAccountBoundedSchema(
+                                pk=account.pk,
+                                status=status.value,
+                                private_key=account.private_key if status != StellarAccountStatus.fulfilled else None
+                            ),
+                        )
 
-                # Setting up GAStellarAccountBoundedSchema data to Redis
-                RDB.set_bounded_stellar_account(
-                    pipe=pipe,
-                    bounded_account=GAStellarAccountBoundedSchema(
-                        pk=account.pk, status=status.value),
-                )
             pipe.execute()
             pipe.reset()
 
 
 @app.task(name='send_updated_stellar_accounts_to_django')
-@task_blocker(task_key='send_updated_stellar_accounts_to_django', key_ttl=300)
+@task_blocker(task_key='send_updated_stellar_accounts_to_django', key_ttl=300, can_ignore_block=True)
 def send_updated_stellar_accounts_to_django(conn=None):
     """
         Function for sending `GAStellarAccountBoundedSchema` data to Django-server
@@ -132,7 +169,8 @@ def send_updated_stellar_accounts_to_django(conn=None):
             conn=conn, session=session, timeout=timeout)
         accounts: Dict[int, str] | None = RDB.get_bounded_stellar_accounts_data(
             conn=conn)
-        request_data = [json.loads(account) for account in accounts.values()] if accounts else None
+        request_data = [json.loads(
+            account) for account in accounts.values()] if accounts else None
         if accounts:
             # Sending data to Django-server
             status_code = DjangoRepository.send_updated_stellar_accounts(
@@ -240,11 +278,11 @@ def set_transaction_result_into_redis():
         server = Server(horizon_url=settings.HORIZON_URL)
         # Fetch issuing keypair from secret key.
         # Получили пару ключей инициатора - Root Аккаунт
-        issuing_keypair = Keypair.from_secret(
+        issuer_keypair = Keypair.from_secret(
             secret=settings.ISSUER_SECRET_KEY)
         # Fetch the current sequence number for the source account from Horizon.
         # Получаем по публичному ключу данные аккаунта
-        issuer = server.load_account(issuing_keypair.public_key)
+        issuer_account = server.load_account(issuer_keypair.public_key)
 
         # Fetch the current base fee for the transaction
         # Получаем минимальную комиисию за транзакцию
@@ -252,15 +290,16 @@ def set_transaction_result_into_redis():
 
         # Create an object to represent the new asset
         # Получаем валюту GA coin TODO разберись
-        asset = Asset(settings.ASSET_CODE, issuing_keypair.public_key)
+        asset: Asset = StellarRepository.get_ga_ngn_asset(
+            issuer_public_key=issuer_keypair.public_key)
 
         with conn.pipeline(transaction=True) as pipe:
             for transaction in transactions:
                 transaction_result = StellarRepository.send_transaction(
                     transaction=transaction,
                     server=server,
-                    issuing_keypair=issuing_keypair,
-                    issuer=issuer,
+                    issuer_keypair=issuer_keypair,
+                    issuer_account=issuer_account,
                     base_fee=base_fee,
                     asset=asset
                 )

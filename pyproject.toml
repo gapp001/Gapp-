@@ -12,6 +12,7 @@ stellar-sdk = "^7.0.1"
 celery = "^5.2.6"
 redis = "^4.2.2"
 flower = "^1.2.0"
+python-gnupg = "^0.5.0"
 
 [tool.poetry.dev-dependencies]
 autopep8 = "^1.6.0"

@@ -93,6 +93,7 @@ class GAStellarAccountSchema(BaseModel):
     pk: int
     user_id: int
     public_key: str
+    private_key: str | None
     status: str
     created_at: str
 
@@ -100,4 +101,5 @@ class GAStellarAccountSchema(BaseModel):
 class GAStellarAccountBoundedSchema(BaseModel):
     pk: int
     status: str
+    private_key: str | None
 
