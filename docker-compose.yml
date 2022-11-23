@@ -1,9 +1,9 @@
-version: '3.6'
+version: '3.5'
 
 services:
-  web:
+  stellar_ms_web:
     build: .
-    container_name: web
+    container_name: stellar_ms_web
     command: uvicorn application.main:app
     env_file:
       - ./.env
@@ -11,8 +11,8 @@ services:
       - 8000
     restart: always
 
-  redis:
-    container_name: redis
+  stellar_ms_redis:
+    container_name: stellar_ms_redis
     command: redis-server /usr/local/etc/redis/redis.conf
     image: redis:6-alpine
     volumes:
@@ -22,30 +22,30 @@ services:
     logging:
       options:
         max-size: 10m
-    expose:
-      - 6379
+    # expose:
+    #   - 6379
     restart: unless-stopped
 
-  celery:
+  stellar_ms_celery:
     build: .
-    container_name: celery
+    container_name: stellar_ms_celery
     command: bash -c "celery -A conf worker --concurrency 4 -l INFO -n worker1"
     env_file:
       - ./.env
     depends_on:
-      - web
-      - redis
+      - stellar_ms_web
+      - stellar_ms_redis
     restart: always
 
-  celery-beat:
+  stellar_ms_celery-beat:
     build: .
-    container_name: celery-beat
+    container_name: stellar_ms_celery-beat
     command: celery -A conf beat -l INFO
     env_file:
       - ./.env
     depends_on:
-      - web
-      - redis
+      - stellar_ms_web
+      - stellar_ms_redis
     restart: always
 
   dashboard:
@@ -59,6 +59,6 @@ services:
       env_file:
         - ./.env
       depends_on:
-        - web
-        - redis
-        - celery
+        - stellar_ms_web
+        - stellar_ms_redis
+        - stellar_ms_celery

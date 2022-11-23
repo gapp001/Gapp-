@@ -13,6 +13,7 @@ class RDB:
     """Class helper for Redis"""
     RUNNING_TASK_VALUE: str = '1'
     STELLAR_ACCOUNTS_KEY: str = 'stellar_accounts'
+    TRANSACTIONS_KEY: str = 'transactions'
 
     @staticmethod
     def get_redis_pool() -> redis.Redis:

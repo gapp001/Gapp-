@@ -9,7 +9,10 @@ class Settings(BaseSettings):
     # Stellar cofigurations
     HORIZON_URL: str
     DEFAULT_TIMEOUT: int
+    NGN_CURRENCY = 'NGN'
+    USD_CURRENCY = 'USD'
     GA_NGN_ASSET_CODE: str
+    GA_USD_ASSET_CODE: str
     ISSUER_SECRET_KEY: str  # Root account
     STARTING_XLM_BALANCE: str  # For new accounts
 

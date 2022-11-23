@@ -8,7 +8,7 @@ authors = ["Sergey Danilov <sergej.d@itfox-web.com>"]
 python = "^3.10"
 fastapi = "^0.75.1"
 uvicorn = {extras = ["standard"], version = "^0.17.6"}
-stellar-sdk = "^7.0.1"
+stellar-sdk = "^8.1.0"
 celery = "^5.2.6"
 redis = "^4.2.2"
 flower = "^1.2.0"

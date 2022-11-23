@@ -5,7 +5,9 @@ ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 ENV POETRY_VERSION=1.1.12
 
-RUN pip install "poetry==$POETRY_VERSION"
+RUN pip install "poetry==$POETRY_VERSION" && apt-get update \
+    && apt-get install gnupg -y \
+    && apt-get clean 
 
 RUN mkdir /app
 WORKDIR /app

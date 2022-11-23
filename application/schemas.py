@@ -26,11 +26,21 @@ class StellarPaymentTransactionSchema(BaseModel):
     signatures: List[str]
     valid_after: datetime | None
     valid_before: datetime | None
+    ga_transaction_id: int | None = None
 
 
 class DjangoAuthCredentials(BaseModel):
     access_token: str
     refresh_token: str
+
+
+class GAStellarAccountSchema(BaseModel):
+    pk: int
+    user_id: int
+    public_key: str
+    private_key: str | None
+    status: str
+    created_at: str
 
 
 class GAUserSchema(BaseModel):
@@ -40,7 +50,7 @@ class GAUserSchema(BaseModel):
     first_name: str | None
     phone_number: str | None
     country: str
-    stellar_public_key: str | None
+    stellar_account: GAStellarAccountSchema | None
 
 
 class GASubjectDetailsSchema(BaseModel):
@@ -62,8 +72,8 @@ class GATransactionDetailingSchema(BaseModel):
 
 class GATransactionSchema(BaseModel):
     id: int
-    debit_subject: GASubjectSchema | None
-    credit_subject: GASubjectSchema | None
+    # debit_subject: GASubjectSchema | None
+    # credit_subject: GASubjectSchema | None
     type_transaction: int
     transaction_status: int
     stellar_status: int
@@ -89,17 +99,7 @@ class TransactionResultSchema(BaseModel):
     stellar_transaction_detail: str | None
 
 
-class GAStellarAccountSchema(BaseModel):
-    pk: int
-    user_id: int
-    public_key: str
-    private_key: str | None
-    status: str
-    created_at: str
-
-
 class GAStellarAccountBoundedSchema(BaseModel):
     pk: int
     status: str
     private_key: str | None
-

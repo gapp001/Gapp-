@@ -80,14 +80,13 @@ class DjangoRepository(Repository):
             and transaction.stellar_status is "unconfirmed"
         """
         response = session.get(
-            url=f'{settings.DJANGO_DOMAIN}/transaction/',
+            url=f'{settings.DJANGO_DOMAIN}/transactions/stellar/',
             headers={'Authorization': f'Bearer {access_token}'},
-            params=GetTransactionsQueryParams(
-                stellar_status=StellarTransactionStatus.UNCONFIRMED,
-                transaction_status=TransactionStatus.IN_PROCESSING,
-                kind=TransactionKind.GENESIS,
-                has_stellar_transaction_hash=False
-            ).__dict__,
+            # params=GetTransactionsQueryParams(
+            #     transaction_status=TransactionStatus.IN_PROCESSING,
+            #     kind=TransactionKind.GENESIS, # внутренний перевод, у которых нет стеллар аккаунта
+            #     has_stellar_transaction_hash=False
+            # ).__dict__,
             timeout=timeout
         )
         response.raise_for_status()

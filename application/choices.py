@@ -55,6 +55,8 @@ class TransactionStatus:
 class StellarTransactionStatus:
     CONFIRMED: int = 1
     UNCONFIRMED: int = 2
+    STELLAR_NOT_NEEDED: int = 3
+    STELLAR_PENDING: int = 4
 
     def __init__(self):
         self.CHOICES = [(field.default, field.name) for field in fields(StellarTransactionStatus)]

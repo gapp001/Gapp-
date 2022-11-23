@@ -5,29 +5,44 @@ from stellar_sdk import (Account, Asset, Keypair, Network, Server,
                          TransactionBuilder)
 from stellar_sdk.exceptions import BadRequestError, BadResponseError
 from stellar_sdk.exceptions import NotFoundError, BadRequestError, BadResponseError, UnknownRequestError, ConnectionError
+from stellar_sdk.xdr.transaction_result import TransactionResult
+from stellar_sdk.xdr.payment_result_code import PaymentResultCode
+from stellar_sdk.decorated_signature import DecoratedSignature
+
 
 from application.schemas import (
     GATransactionSchema, StellarPaymentTransactionSchema, TransactionResultSchema)
 from conf.exceptions import NoRecipientAccountFound
+
 from conf.settings import settings
 from .repository import Repository
 
 
 class StellarRepository(Repository):
     """Repository class for Stellar logic"""
-    
+
     @staticmethod
     def check_trustline_exists(account_wallets: List[Dict[str, Any]]) -> bool:
         """Method for checking if an account has a trustline"""
+        has_ga_ngn_trustline: bool = False
+        has_ga_usd_trustline: bool = False
         for wallet in account_wallets:
             if wallet.get('asset_code') == settings.GA_NGN_ASSET_CODE:
-                return True
-        return False
+                has_ga_ngn_trustline = True
+            elif wallet.get('asset_code') == settings.GA_USD_ASSET_CODE:
+                has_ga_usd_trustline = True
+        return has_ga_ngn_trustline and has_ga_usd_trustline
 
     @staticmethod
-    def get_ga_ngn_asset(issuer_public_key) -> Asset:
-        """Method for returning gaNGN asset"""
-        return Asset(settings.GA_NGN_ASSET_CODE, issuer_public_key)
+    def get_asset(issuer_public_key: str, currency: str) -> Asset:
+        """Method for returning Asset object"""
+        match currency:
+            case settings.USD_CURRENCY:
+                return Asset(settings.GA_USD_ASSET_CODE, issuer_public_key)
+            case settings.NGN_CURRENCY:
+                return Asset(settings.GA_NGN_ASSET_CODE, issuer_public_key)
+            case _:
+                raise ValueError('Incorrect currency')
 
     @staticmethod
     def create_root_account(public_key: Optional[str] = None) -> bool:
@@ -76,7 +91,6 @@ class StellarRepository(Repository):
 
     @staticmethod
     def create_stellar_account(server: Server,
-                               asset: Asset,
                                recipient_public_key: str,
                                issuer_keypair: Keypair,
                                issuer_account: Account,
@@ -110,6 +124,7 @@ class StellarRepository(Repository):
 
     @staticmethod
     def send_transaction(server: Server,
+                         ga_transaction_id: int,
                          amount: str | Decimal,
                          recipient_public_key: str,
                          issuer_keypair: Keypair,
@@ -150,8 +165,8 @@ class StellarRepository(Repository):
             # Sign this transaction with the issuer secret key
             stellar_transaction.sign(issuer_keypair)
             # Submit the transaction to the Horizon server.
-            response = StellarPaymentTransactionSchema(
-                **server.submit_transaction(stellar_transaction))
+            response = StellarPaymentTransactionSchema(ga_transaction_id=ga_transaction_id,
+                                                       **server.submit_transaction(stellar_transaction))
             return response
 
         except (BadRequestError, BadResponseError) as e:
@@ -218,7 +233,9 @@ class StellarRepository(Repository):
     def change_trust_operation(server: Server,
                                recipient_keypair: Keypair,
                                base_fee: int,
-                               asset: Asset) -> None:
+                               ga_ngn_asset: Asset,
+                               ga_usd_asset: Asset,
+                               ) -> None:
         '''
         Create a trustline between receiving account and issuing account for asset.
         Функция для создания линии доверия между эмитентом и получателем.
@@ -226,7 +243,8 @@ class StellarRepository(Repository):
         после создании аккаунта и подписываться созданным пользователем.
         '''
         # Fetch the current sequence number for the source account from Horizon.
-        recipient_account: Account | None = __class__.get_account(server=server, public_key=recipient_keypair.public_key)
+        recipient_account: Account | None = __class__.get_account(
+            server=server, public_key=recipient_keypair.public_key)
 
         if not recipient_account:
             raise NoRecipientAccountFound
@@ -238,7 +256,8 @@ class StellarRepository(Repository):
                 network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
                 base_fee=base_fee,
             )
-            .append_change_trust_op(asset=asset)
+            .append_change_trust_op(asset=ga_ngn_asset)
+            .append_change_trust_op(asset=ga_usd_asset)
             .set_timeout(settings.DEFAULT_TIMEOUT)
             .build()
         )
@@ -246,3 +265,16 @@ class StellarRepository(Repository):
         stellar_transaction.sign(recipient_keypair)
         result = server.submit_transaction(stellar_transaction)
         return result.get('successful', False)
+
+    def check_transaction_result(result_xdr: str) -> bool:
+        """Method for checking result of stellar transaction"""
+        transaction_result = TransactionResult.from_xdr(result_xdr)
+        try:
+            transaction = transaction_result.result.results[0]
+            return transaction.tr.payment_result.code == PaymentResultCode.PAYMENT_SUCCESS
+        except IndexError:
+            return False
+
+
+class NoSignaturesFound(Exception):
+    ...

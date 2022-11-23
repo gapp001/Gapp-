@@ -4,6 +4,8 @@ import requests
 from redis import Redis
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+from stellar_sdk.xdr.transaction_result import TransactionResult
+from stellar_sdk.xdr.payment_result_code import PaymentResultCode
 from stellar_sdk.asset import Asset
 from stellar_sdk.keypair import Keypair
 from stellar_sdk.network import Network
@@ -12,7 +14,7 @@ from stellar_sdk.account import Account
 from stellar_sdk.exceptions import NotFoundError
 from application.repositories.stellar_repository import StellarRepository
 from application.schemas import StellarPaymentTransactionSchema, TransactionResultSchema
-from conf.celery import get_stellar_accounts_from_django_task, send_updated_stellar_accounts_to_django
+from conf.celery import get_stellar_accounts_from_django_task, send_transaction_result_to_django_task, send_updated_stellar_accounts_to_django_task, send_transactions_to_stellar_task
 from conf.redis import RDB
 from conf.settings import settings
 
@@ -29,6 +31,8 @@ class ConstantsDTO:
     RECIPIENT_1_SECRET_KEY: str = 'SDZAFQQDWGKUNSAFOCCODFHGKAG6A6HHKCTRY2L3RACDR2RY4B54K6FQ'
     RECIPIENT_2_PUBLIC_KEY: str = 'GD435GSIGYGYBA2YC5TFM3IAUSILSUDEICBGQBSJHFCA4SFMRPWYATMY'
     RECIPIENT_2_SECRET_KEY: str = 'SDYU5RMG665JGLS5KPEM3D4DFWWKL4SBVICPIQHXGYPO66H2REXCOAP5'
+    RECIPIENT_3_PUBLIC_KEY: str = 'GDD3EWF7BS74TKN25K7MNO4LDFFXH63VP7AQVV7P3NSGYH476GEOZYP6'
+    RECIPIENT_3_SECRET_KEY: str = 'SB5JFJSEHL43JSZUI4QGXVDUIAFKPIBSGIUYDWOD3WXAWPJUTAEKYMFJ'
 
     GA_NGNG_ASSET_CODE: str = 'gaNGN'
 
@@ -53,7 +57,7 @@ def create_root_account(public_key: Optional[str] = None) -> bool:
     return _response.get('success')
 
 
-def get_or_create_stellar_account(server: Server, recipient_public_key: str, issuer_account: Account, issuer_keypair: Keypair) -> Account:
+def get_or_create_stellar_account(server: Server, recipient_public_key: str, issuer_account: Account, issuer_keypair: Keypair, base_fee: int) -> Account:
     try:
         account: Account = server.load_account(recipient_public_key)
         # print('Account was created earlier')
@@ -97,37 +101,62 @@ def set_transactions_to_redis():
     print(f'{transactions.values()=}')
 
 
-def create_trustline(server: Server, recipient_keypair: Keypair, base_fee: int, asset: Asset):
+def create_trustline(server: Server,
+                     recipient_keypair: Keypair,
+                     base_fee: int,
+                     ga_ngn_asset: Asset,
+                     ga_usd_asset: Asset,):
     return StellarRepository.change_trust_operation(
         server=server,
         recipient_keypair=recipient_keypair,
         base_fee=base_fee,
-        asset=asset,
+        ga_ngn_asset=ga_ngn_asset,
+        ga_usd_asset=ga_usd_asset,
     )
 
+
+def check_transaction_result(result_xdr: str) -> bool:
+    transaction_result = TransactionResult.from_xdr(result_xdr)
+    try:
+        transaction = transaction_result.result.results[0]
+        return transaction.tr.payment_result.code == PaymentResultCode.PAYMENT_SUCCESS
+    except IndexError:
+        return False
 
 
 if __name__ == "__main__":
     # get_stellar_accounts_from_django_task()
-    send_updated_stellar_accounts_to_django()
-    # server = Server(horizon_url=ConstantsDTO.TESTNET)
+    # send_updated_stellar_accounts_to_django()
 
-    # base_fee: int = server.fetch_base_fee()
-    # issuer_keypair: Keypair = Keypair.from_secret(
-    #     ConstantsDTO.ROOT_ISSUER_SECRET_KEY)
-    # issuer_account = get_issuer_account(server=server)
+    server = Server(horizon_url=ConstantsDTO.TESTNET)
+
+    base_fee: int = server.fetch_base_fee()
+    issuer_keypair: Keypair = Keypair.from_secret(
+        ConstantsDTO.ROOT_ISSUER_SECRET_KEY)
+    issuer_account = get_issuer_account(server=server)
     # asset = Asset(
     #     code=ConstantsDTO.GA_NGNG_ASSET_CODE,
     #     issuer=issuer_keypair.public_key
     # )
 
-    # Recipient Account #1 ↓
+    ga_ngn_asset: Asset = StellarRepository.get_asset(
+        issuer_public_key=issuer_keypair.public_key,
+        currency=settings.NGN_CURRENCY,
+    )
+    ga_usd_asset: Asset = StellarRepository.get_asset(
+        issuer_public_key=issuer_keypair.public_key,
+        currency=settings.USD_CURRENCY,
+    )
+
+    # # Recipient Account #1 ↓
     # account_1: Account = get_or_create_stellar_account(
     #     server=server,
     #     recipient_public_key=ConstantsDTO.RECIPIENT_1_PUBLIC_KEY,
     #     issuer_keypair=issuer_keypair,
     #     issuer_account=issuer_account,
     # )
+
+    # ae92833e4f4ebe26737bcb2cbb94aa6e4fa89982e2933dcfa903bd6c8e836aa5 # transacfion between acc_1 and acc_2
 
     # account_1_balances: List[Dict[str, Any]
     #                          ] = account_1.raw_data.get('balances')
@@ -141,22 +170,16 @@ if __name__ == "__main__":
     # account_1_keypair = Keypair.from_secret(
     #     ConstantsDTO.RECIPIENT_1_SECRET_KEY)
 
-    # created_trustline = create_trustline(
-    #     server=server,
-    #     recipient_keypair=account_1_keypair,
-    #     base_fee=base_fee,
-    #     asset=asset,
-    # )
-    
     # print(account_1.__dict__)
 
-    # Recipient Account #2 ↓
+    # # Recipient Account #2 ↓
     # account_2: Account = get_or_create_stellar_account(
     #     server=server,
     #     recipient_public_key=ConstantsDTO.RECIPIENT_2_PUBLIC_KEY,
     #     issuer_keypair=issuer_keypair,
     #     issuer_account=issuer_account,
     # )
+
     # print('\nAccount 2 Balances')
     # account_2_balances: List[Dict[str, Any]
     #                          ] = account_2.raw_data.get('balances')
@@ -173,8 +196,33 @@ if __name__ == "__main__":
     # account_2_keypair = Keypair.from_secret(
     #     ConstantsDTO.RECIPIENT_2_SECRET_KEY)
 
+  # Recipient Account #3 ↓
+    # account_3: Account = get_or_create_stellar_account(
+    #     server=server,
+    #     base_fee=base_fee,
+    #     recipient_public_key=ConstantsDTO.RECIPIENT_3_PUBLIC_KEY,
+    #     issuer_keypair=issuer_keypair,
+    #     issuer_account=issuer_account,
+    # )
+
+    # account_3_keypair = Keypair.from_secret(
+    #     ConstantsDTO.RECIPIENT_3_SECRET_KEY)
+
+    # created_trustline = create_trustline(
+    #     server=server,
+    #     recipient_keypair=account_3_keypair,
+    #     base_fee=base_fee,
+    #     ga_ngn_asset=ga_ngn_asset,
+    #     ga_usd_asset=ga_usd_asset,
+    # )
+
+    # print(f'{create_trustline=}')
+    # get_stellar_accounts_from_django_task()
+    # send_updated_stellar_accounts_to_django_task()
+    send_transactions_to_stellar_task()
+    send_transaction_result_to_django_task()
     # payment_operation: StellarPaymentTransactionSchema =  StellarRepository.send_transaction(
-    #     amount=Decimal('500.00'),
+    #     amount=Decimal('555.55'),
     #     recipient_public_key=account_2_keypair.public_key,
     #     issuer_account=account_1,
     #     issuer_keypair=account_1_keypair,
