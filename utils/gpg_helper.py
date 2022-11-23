@@ -43,6 +43,8 @@ class GPGHelper:
     @staticmethod
     def import_key(key_data: bytes | str, passphrase: str | None = None, is_base64_encoded_key: bool = False) -> ImportResult:
         """Method for importGPGing key from byte string"""
+        extra_args: List[str] = ['--ignore-time-conflict']
+
         if isinstance(key_data, str):
             key_data = key_data.encode()
 
@@ -51,7 +53,7 @@ class GPGHelper:
                 key_data: bytes = __class__.b64decode_data(key_data)
             except binascii.Error:
                 raise Base64DecodeError
-        return gpg.import_keys(key_data=key_data, passphrase=passphrase)
+        return gpg.import_keys(key_data=key_data, passphrase=passphrase, extra_args=extra_args)
 
     @staticmethod
     def entrust_key(fingerprints: list[str]) -> TrustResult:
