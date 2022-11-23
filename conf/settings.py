@@ -5,10 +5,14 @@ class Settings(BaseSettings):
     # FastAPI cofigurations
     APP_PREFIX: str
 
+    DJANGO_CREDENTIALS_TTL: int # in minutes
     # Stellar cofigurations
     HORIZON_URL: str
     DEFAULT_TIMEOUT: int
-    ASSET_CODE: str
+    NGN_CURRENCY = 'NGN'
+    USD_CURRENCY = 'USD'
+    GA_NGN_ASSET_CODE: str
+    GA_USD_ASSET_CODE: str
     ISSUER_SECRET_KEY: str  # Root account
     STARTING_XLM_BALANCE: str  # For new accounts
 
@@ -24,6 +28,11 @@ class Settings(BaseSettings):
 
     # Redis cofigurations
     REDIS_HOST: str
+
+    # GPG configurations
+    GPG_ROOT_KEY_PASSPHRASE: str
+    GPG_ROOT_B64_PUB_KEY: str
+    GPG_ROOT_B64_PRIV_KEY: str
 
     class Config:
         env_file = '.env'
