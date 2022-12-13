@@ -1,7 +1,6 @@
 import json
-import random
-import time
 from typing import Any, Dict, List
+from sentry_sdk import capture_message, set_context
 import requests
 from celery import Celery
 from stellar_sdk import Asset, Keypair, Server
@@ -63,113 +62,116 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
         with status `keypair_generated` from Django-server
     """
     timeout = 8.0
-    conn = conn or RDB.get_redis_pool()
-    with requests.Session() as session:
-        credentials: DjangoAuthCredentials = get_credentials_from_redis(
-            conn=conn, session=session, timeout=timeout)
+    try:
+        conn = conn or RDB.get_redis_pool()
+        with requests.Session() as session:
+            credentials: DjangoAuthCredentials = get_credentials_from_redis(
+                conn=conn, session=session, timeout=timeout)
 
-        stellar_accounts: List[GAStellarAccountSchema] = DjangoRepository.get_stellar_accounts(
-            session=session,
-            timeout=timeout,
-            access_token=credentials.access_token
-        )
-        print(f'\nget_stellar_accounts_from_django_task')
-        print(f'{stellar_accounts=}')
-        if stellar_accounts:
-            server: Server = Server(settings.HORIZON_URL)
-            issuer_keypair = Keypair.from_secret(
-                secret=settings.ISSUER_SECRET_KEY)
-            issuer_account: Account | None = StellarRepository.get_account(
-                server=server,
-                public_key=issuer_keypair.public_key,
+            stellar_accounts: List[GAStellarAccountSchema] = DjangoRepository.get_stellar_accounts(
+                session=session,
+                timeout=timeout,
+                access_token=credentials.access_token
             )
-            
+            print(f'\nget_stellar_accounts_from_django_task')
+            print(f'{stellar_accounts=}')
+            if stellar_accounts:
+                server: Server = Server(settings.HORIZON_URL)
+                issuer_keypair = Keypair.from_secret(
+                    secret=settings.ISSUER_SECRET_KEY)
+                issuer_account: Account | None = StellarRepository.get_account(
+                    server=server,
+                    public_key=issuer_keypair.public_key,
+                )
+                
 
-            if not issuer_account:
-                raise NoIssuerAccountFound
+                if not issuer_account:
+                    raise NoIssuerAccountFound
 
-            ga_ngn_asset: Asset = StellarRepository.get_asset(
-                issuer_public_key=issuer_keypair.public_key,
-                currency=settings.NGN_CURRENCY,
-            )
-            ga_usd_asset: Asset = StellarRepository.get_asset(
-                issuer_public_key=issuer_keypair.public_key,
-                currency=settings.USD_CURRENCY,
-            )
-            base_fee: int = server.fetch_base_fee()
+                ga_ngn_asset: Asset = StellarRepository.get_asset(
+                    issuer_public_key=issuer_keypair.public_key,
+                    currency=settings.NGN_CURRENCY,
+                )
+                ga_usd_asset: Asset = StellarRepository.get_asset(
+                    issuer_public_key=issuer_keypair.public_key,
+                    currency=settings.USD_CURRENCY,
+                )
+                base_fee: int = server.fetch_base_fee()
 
-            with conn.pipeline(transaction=True) as pipe:
-                for account in stellar_accounts:
-                    can_skip_create_operation: bool = False
+                with conn.pipeline(transaction=True) as pipe:
+                    for account in stellar_accounts:
+                        can_skip_create_operation: bool = False
 
-                    # проверь kiss cache
-                    existing_account: Account | None = StellarRepository.get_account(
-                        server=server,
-                        public_key=account.public_key)
-                    if existing_account:
-                        account_wallets: List[Dict[str, Any]] = existing_account.raw_data.get(
-                            'balances')
-                        has_trustline: bool = StellarRepository.check_trustline_exists(
-                            account_wallets)
-                        # Setting up GAStellarAccountBoundedSchema data to Redis
-                        if has_trustline:
-                            RDB.set_bounded_stellar_account(
-                                pipe=pipe,
-                                bounded_account=GAStellarAccountBoundedSchema(
-                                    pk=account.pk,
-                                    status=StellarAccountStatus.fulfilled.value,
-                                ),
-                            )
-                            continue
-                        else:
-                            can_skip_create_operation = True
-                    # Decrypting Stellar secret key
-                    decrypted_private_key: bytes = GPGHelper.root_key_helper.decrypt_message(
-                        message=account.private_key).data
-
-                    if isinstance(decrypted_private_key, bytes):
-                        decrypted_private_key: str = decrypted_private_key.decode()
-
-                    if not can_skip_create_operation:
-                        is_created_account: bool = StellarRepository.create_stellar_account(
+                        # проверь kiss cache
+                        existing_account: Account | None = StellarRepository.get_account(
                             server=server,
-                            recipient_public_key=account.public_key,
-                            issuer_keypair=issuer_keypair,
-                            issuer_account=issuer_account,
-                            base_fee=base_fee,
-                        )
-                    else:
-                        is_created_account = True
-
-                    if is_created_account:
-                        # Create trustline between issuer and receiver
-                        recipient_keypair = Keypair.from_secret(
-                            decrypted_private_key)
-                        has_created_trustline: bool = StellarRepository.change_trust_operation(
-                            server=server,
-                            recipient_keypair=recipient_keypair,
-                            base_fee=base_fee,
-                            ga_ngn_asset=ga_ngn_asset,
-                            ga_usd_asset=ga_usd_asset,
-                        )
-
-                        if has_created_trustline:
+                            public_key=account.public_key)
+                        if existing_account:
+                            account_wallets: List[Dict[str, Any]] = existing_account.raw_data.get(
+                                'balances')
+                            has_trustline: bool = StellarRepository.check_trustline_exists(
+                                account_wallets)
                             # Setting up GAStellarAccountBoundedSchema data to Redis
-                            status: StellarAccountStatus = StellarAccountStatus.fulfilled if has_created_trustline \
-                                else StellarAccountStatus.keypair_generated
-                            RDB.set_bounded_stellar_account(
-                                pipe=pipe,
-                                bounded_account=GAStellarAccountBoundedSchema(
-                                    pk=account.pk,
-                                    status=status.value,
-                                    private_key=account.private_key if status != StellarAccountStatus.fulfilled else None
-                                ),
+                            if has_trustline:
+                                RDB.set_bounded_stellar_account(
+                                    pipe=pipe,
+                                    bounded_account=GAStellarAccountBoundedSchema(
+                                        pk=account.pk,
+                                        status=StellarAccountStatus.fulfilled.value,
+                                    ),
+                                )
+                                continue
+                            else:
+                                can_skip_create_operation = True
+                        # Decrypting Stellar secret key
+                        decrypted_private_key: bytes = GPGHelper.root_key_helper.decrypt_message(
+                            message=account.private_key).data
+
+                        if isinstance(decrypted_private_key, bytes):
+                            decrypted_private_key: str = decrypted_private_key.decode()
+
+                        if not can_skip_create_operation:
+                            is_created_account: bool = StellarRepository.create_stellar_account(
+                                server=server,
+                                recipient_public_key=account.public_key,
+                                issuer_keypair=issuer_keypair,
+                                issuer_account=issuer_account,
+                                base_fee=base_fee,
+                            )
+                        else:
+                            is_created_account = True
+
+                        if is_created_account:
+                            # Create trustline between issuer and receiver
+                            recipient_keypair = Keypair.from_secret(
+                                decrypted_private_key)
+                            has_created_trustline: bool = StellarRepository.change_trust_operation(
+                                server=server,
+                                recipient_keypair=recipient_keypair,
+                                base_fee=base_fee,
+                                ga_ngn_asset=ga_ngn_asset,
+                                ga_usd_asset=ga_usd_asset,
                             )
 
-                pipe.execute()
-                pipe.reset()
-    print(f'DONE get_stellar_accounts_from_django_task\n')
+                            if has_created_trustline:
+                                # Setting up GAStellarAccountBoundedSchema data to Redis
+                                status: StellarAccountStatus = StellarAccountStatus.fulfilled if has_created_trustline \
+                                    else StellarAccountStatus.keypair_generated
+                                RDB.set_bounded_stellar_account(
+                                    pipe=pipe,
+                                    bounded_account=GAStellarAccountBoundedSchema(
+                                        pk=account.pk,
+                                        status=status.value,
+                                        private_key=account.private_key if status != StellarAccountStatus.fulfilled else None
+                                    ),
+                                )
 
+                    pipe.execute()
+                    pipe.reset()
+        print(f'DONE get_stellar_accounts_from_django_task\n')
+    except Exception as e:
+        set_context('get_stellar_accounts_from_django_task_case', value=e.__dict__)
+        capture_message('Error in get_stellar_accounts_from_django_task', level='error')
 
 @app.task(name='send_updated_stellar_accounts_to_django')
 @task_blocker(task_key='send_updated_stellar_accounts_to_django', key_ttl=300)
@@ -179,30 +181,34 @@ def send_updated_stellar_accounts_to_django_task(conn=None):
     """
     print('\nsend_updated_stellar_accounts_to_django_task')
     timeout = 8.0
-    conn = conn or RDB.get_redis_pool()
-    with requests.Session() as session:
-        credentials: DjangoAuthCredentials = get_credentials_from_redis(
-            conn=conn, session=session, timeout=timeout)
-        accounts: Dict[int, str] | None = RDB.get_bounded_stellar_accounts_data(
-            conn=conn)
-        request_data = [json.loads(
-            account) for account in accounts.values()] if accounts else None
-        if accounts:
-            # Sending data to Django-server
-            print(f'UPDATED STELLAR ACCOUNTS: {accounts=}')
-            status_code = DjangoRepository.send_updated_stellar_accounts(
-                session=session,
-                timeout=timeout,
-                access_token=credentials.access_token,
-                data=request_data,
-            )
-            result: bool = status_code == 200
-            if result:
-                conn.hdel(RDB.STELLAR_ACCOUNTS_KEY, *accounts.keys())
+    try:
+        conn = conn or RDB.get_redis_pool()
+        with requests.Session() as session:
+            credentials: DjangoAuthCredentials = get_credentials_from_redis(
+                conn=conn, session=session, timeout=timeout)
+            accounts: Dict[int, str] | None = RDB.get_bounded_stellar_accounts_data(
+                conn=conn)
+            request_data = [json.loads(
+                account) for account in accounts.values()] if accounts else None
+            if accounts:
+                # Sending data to Django-server
+                print(f'UPDATED STELLAR ACCOUNTS: {accounts=}')
+                status_code = DjangoRepository.send_updated_stellar_accounts(
+                    session=session,
+                    timeout=timeout,
+                    access_token=credentials.access_token,
+                    data=request_data,
+                )
+                result: bool = status_code == 200
+                if result:
+                    conn.hdel(RDB.STELLAR_ACCOUNTS_KEY, *accounts.keys())
+                print('DONE send_updated_stellar_accounts_to_django_task DONE')
+                return result
             print('DONE send_updated_stellar_accounts_to_django_task DONE')
-            return result
-        print('DONE send_updated_stellar_accounts_to_django_task DONE')
-        return False
+            return False
+    except Exception as e:
+        set_context('send_updated_stellar_accounts_to_django_task', value=e.__dict__)
+        capture_message('Error in send_updated_stellar_accounts_to_django_task', level='error')
 
 
 # # @app.task(name='get_stellar_accounts_from_django_task')
@@ -263,109 +269,120 @@ def send_updated_stellar_accounts_to_django_task(conn=None):
 # @task_blocker(task_key='configure_credentials_from_django')
 def configure_credentials_from_django_task(conn: Redis):
     timeout = 8.0
-    with requests.Session() as session:
-        access_token = conn.get('access_token')
-        refresh_token = conn.get('refresh_token')
-        if not access_token:
-            credentials = DjangoRepository.get_credentials(
-                session=session, timeout=timeout)
+    try:
+        with requests.Session() as session:
+            access_token = conn.get('access_token')
+            refresh_token = conn.get('refresh_token')
+            if not access_token:
+                credentials = DjangoRepository.get_credentials(
+                    session=session, timeout=timeout)
+                set_credentials_into_redis(conn=conn, credentials=credentials)
+                return {'success': True, 'updated': False}
+            credentials = DjangoRepository.get_refreshed_credentials(
+                session=session,
+                timeout=timeout,
+                access_token=access_token,
+                refresh_token=refresh_token,
+            )
             set_credentials_into_redis(conn=conn, credentials=credentials)
-            return {'success': True, 'updated': False}
-        credentials = DjangoRepository.get_refreshed_credentials(
-            session=session,
-            timeout=timeout,
-            access_token=access_token,
-            refresh_token=refresh_token,
-        )
-        set_credentials_into_redis(conn=conn, credentials=credentials)
-        return {'success': True, 'updated': True}
-
+            return {'success': True, 'updated': True}
+    except Exception as e:
+        set_context('configure_credentials_from_django_task', value=e.__dict__)
+        capture_message('Error in configure_credentials_from_django_task', level='error')
 
 @app.task(name='send_stellar_transactions_task')
 @task_blocker(task_key='send_stellar_transactions_task', key_ttl=300, can_ignore_block=True)
 def send_transactions_to_stellar_task(conn=None):
     print('send_transactions_to_stellar_task')
-    conn = conn or RDB.get_redis_pool()
-    timeout = 8.0
-    with requests.Session() as session:
-        credentials = get_credentials_from_redis(
-            conn=conn, session=session, timeout=timeout)
-        transactions = DjangoRepository.get_transactions(
-            session=session,
-            timeout=timeout,
-            access_token=credentials.access_token
-        )
-        if transactions:
-            # Подключились к серверу Stellar
-            server = Server(horizon_url=settings.HORIZON_URL)
-            # Fetch issuing keypair from secret key.
-            # Получили пару ключей инициатора - Root Аккаунт
-            issuer_keypair = Keypair.from_secret(
-                secret=settings.ISSUER_SECRET_KEY)
-            # Fetch the current sequence number for the source account from Horizon.
-            # Получаем по публичному ключу данные аккаунта
-            issuer_account = server.load_account(issuer_keypair.public_key)
+    try:
+        conn = conn or RDB.get_redis_pool()
+        timeout = 8.0
+        with requests.Session() as session:
+            credentials = get_credentials_from_redis(
+                conn=conn, session=session, timeout=timeout)
+            transactions = DjangoRepository.get_transactions(
+                session=session,
+                timeout=timeout,
+                access_token=credentials.access_token
+            )
+            if transactions:
+                # Подключились к серверу Stellar
+                server = Server(horizon_url=settings.HORIZON_URL)
+                # Fetch issuing keypair from secret key.
+                # Получили пару ключей инициатора - Root Аккаунт
+                issuer_keypair = Keypair.from_secret(
+                    secret=settings.ISSUER_SECRET_KEY)
+                # Fetch the current sequence number for the source account from Horizon.
+                # Получаем по публичному ключу данные аккаунта
+                issuer_account = server.load_account(issuer_keypair.public_key)
 
-            # Fetch the current base fee for the transaction
-            # Получаем минимальную комиисию за транзакцию
-            base_fee = server.fetch_base_fee()
+                # Fetch the current base fee for the transaction
+                # Получаем минимальную комиисию за транзакцию
+                base_fee = server.fetch_base_fee()
 
-            # Create an object to represent the new asset
-            # Получаем валюту GA coin TODO разберись
-        
-            with conn.pipeline(transaction=True) as pipe:
-                for ga_transaction in transactions:
-                    stellar_transaction_is_exists: bool = conn.hget(RDB.TRANSACTIONS_KEY, ga_transaction.id)
-                    if stellar_transaction_is_exists:
-                        continue
+                # Create an object to represent the new asset
+                # Получаем валюту GA coin TODO разберись
+            
+                with conn.pipeline(transaction=True) as pipe:
+                    for ga_transaction in transactions:
+                        stellar_transaction_is_exists: bool = conn.hget(RDB.TRANSACTIONS_KEY, ga_transaction.id)
+                        if stellar_transaction_is_exists:
+                            continue
 
-                    asset: Asset = StellarRepository.get_asset(issuer_public_key=issuer_keypair.public_key, currency=ga_transaction.amount_currency)
-                    recipient_public_key: str = ga_transaction.related_user.stellar_account.public_key
-                    try:
-                        transaction_result: StellarPaymentTransactionSchema = StellarRepository.send_transaction(
-                            ga_transaction_id=ga_transaction.id,
-                            amount=ga_transaction.amount,
-                            recipient_public_key=recipient_public_key,
-                            server=server,
-                            issuer_keypair=issuer_keypair,
-                            issuer_account=issuer_account,
-                            base_fee=base_fee,
-                            asset=asset
-                        )
-                    except Exception as e:
-                        transaction_result = None
-                    print(f'{transaction_result=}')
-                    if transaction_result:
-                        pipe.hset(
-                            RDB.TRANSACTIONS_KEY,
-                            ga_transaction.id,
-                            transaction_result.json()
-                        )
-                pipe.execute()
-                pipe.reset()
-        print('DONE send_transactions_to_stellar_task')
-    return {'success': True}
+                        asset: Asset = StellarRepository.get_asset(issuer_public_key=issuer_keypair.public_key, currency=ga_transaction.amount_currency)
+                        recipient_public_key: str = ga_transaction.related_user.stellar_account.public_key
+                        try:
+                            transaction_result: StellarPaymentTransactionSchema = StellarRepository.send_transaction(
+                                ga_transaction_id=ga_transaction.id,
+                                amount=ga_transaction.amount,
+                                recipient_public_key=recipient_public_key,
+                                server=server,
+                                issuer_keypair=issuer_keypair,
+                                issuer_account=issuer_account,
+                                base_fee=base_fee,
+                                asset=asset
+                            )
+                        except Exception as e:
+                            # here not catched exception to Sentry because it's catched in StellarRepository.send_transaction
+                            transaction_result = None
+                        print(f'{transaction_result=}')
+                        if transaction_result:
+                            pipe.hset(
+                                RDB.TRANSACTIONS_KEY,
+                                ga_transaction.id,
+                                transaction_result.json()
+                            )
+                    pipe.execute()
+                    pipe.reset()
+            print('DONE send_transactions_to_stellar_task')
+        return {'success': True}
+    except Exception as e:
+        set_context('send_transactions_to_stellar_task', value=e.__dict__)
+        capture_message('Error in send_transactions_to_stellar_task', level='error')
 
 
 @app.task(name='send_transaction_result_to_django_task')
 @task_blocker(task_key='send_transaction_result_to_django_task', key_ttl=300)
 def send_transaction_result_to_django_task(conn=None):
     print('send_transaction_result_to_django_task')
-    conn = conn or RDB.get_redis_pool()
-    timeout = 8.0
-    with requests.Session() as session:
-        transactions = conn.hgetall('transactions')
-        print(f'{transactions=}')
-        if transactions:
-            credentials = get_credentials_from_redis(
-                conn=conn, session=session, timeout=timeout)
-            response = session.post(
-                url=f'{settings.DJANGO_DOMAIN}/transactions/stellar/webhook/',
-                headers={'Authorization': f'Bearer {credentials.access_token}'},
-                json=[json.loads(transaction) for transaction in transactions.values()],
-            )
-            print()
-            response.raise_for_status()
-            conn.hdel('transactions', *transactions.keys())
-            print('DONE send_transaction_result_to_django_task')
-            return response.status_code == 200
+    try:
+        conn = conn or RDB.get_redis_pool()
+        timeout = 8.0
+        with requests.Session() as session:
+            transactions = conn.hgetall('transactions')
+            print(f'{transactions=}')
+            if transactions:
+                credentials = get_credentials_from_redis(
+                    conn=conn, session=session, timeout=timeout)
+                response = session.post(
+                    url=f'{settings.DJANGO_DOMAIN}/transactions/stellar/webhook/',
+                    headers={'Authorization': f'Bearer {credentials.access_token}'},
+                    json=[json.loads(transaction) for transaction in transactions.values()],
+                )
+                response.raise_for_status()
+                conn.hdel('transactions', *transactions.keys())
+                print('DONE send_transaction_result_to_django_task')
+                return response.status_code == 200
+    except Exception as e:
+        set_context('send_transaction_result_to_django_task', value=e.__dict__)
+        capture_message('Error in send_transaction_result_to_django_task', level='error')

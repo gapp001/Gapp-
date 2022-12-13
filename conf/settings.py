@@ -1,11 +1,12 @@
 from pydantic import BaseSettings
+import sentry_sdk
 
 
 class Settings(BaseSettings):
     # FastAPI cofigurations
     APP_PREFIX: str
 
-    DJANGO_CREDENTIALS_TTL: int # in minutes
+    DJANGO_CREDENTIALS_TTL: int  # in minutes
     # Stellar cofigurations
     HORIZON_URL: str
     DEFAULT_TIMEOUT: int
@@ -34,8 +35,21 @@ class Settings(BaseSettings):
     GPG_ROOT_B64_PUB_KEY: str
     GPG_ROOT_B64_PRIV_KEY: str
 
+    SENTRY_URL: str
+    SENTRY_ENV: str
+    LOCAL_SENTRY_ENV: str = 'local'
+
     class Config:
         env_file = '.env'
 
 
 settings = Settings()
+
+# ↓ Sentry initialization ↓
+if settings.SENTRY_ENV != settings.LOCAL_SENTRY_ENV:
+    sentry_sdk.init(
+        dsn=settings.SENTRY_URL,
+        traces_sample_rate=1.0,
+        send_default_pii=True,
+        environment=settings.SENTRY_ENV,
+    )

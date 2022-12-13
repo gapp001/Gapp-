@@ -4,10 +4,11 @@ from typing import Any, Dict, List, Optional
 from stellar_sdk import (Account, Asset, Keypair, Network, Server,
                          TransactionBuilder)
 from stellar_sdk.exceptions import BadRequestError, BadResponseError
-from stellar_sdk.exceptions import NotFoundError, BadRequestError, BadResponseError, UnknownRequestError, ConnectionError
+from stellar_sdk.exceptions import NotFoundError, BadRequestError, BadResponseError, UnknownRequestError, ConnectionError, SignatureExistError
 from stellar_sdk.xdr.transaction_result import TransactionResult
 from stellar_sdk.xdr.payment_result_code import PaymentResultCode
 from stellar_sdk.decorated_signature import DecoratedSignature
+from sentry_sdk import set_context, capture_message
 
 
 from application.schemas import (
@@ -62,7 +63,9 @@ class StellarRepository(Repository):
         try:
             return server.load_account(public_key)
         except NotFoundError as e:
-            # TODO Add sentry catching error
+            set_context('get_account_case', value=e.__dict__)
+            capture_message(
+                'Error in StellarRepository.get_account', level='error')
             return None
 
     """
@@ -119,7 +122,9 @@ class StellarRepository(Repository):
                 stellar_transaction)
             return response.get('successful')
         except (NotFoundError, BadRequestError, BadResponseError, UnknownRequestError, ConnectionError) as e:
-            # TODO Add sentry catching error
+            set_context('create_stellar_account_case', value=e.__dict__)
+            capture_message(
+                'Error in StellarRepository.create_stellar_account', level='error')
             return False
 
     @staticmethod
@@ -169,7 +174,12 @@ class StellarRepository(Repository):
                                                        **server.submit_transaction(stellar_transaction))
             return response
 
-        except (BadRequestError, BadResponseError) as e:
+        except (NotFoundError, BadRequestError, BadResponseError,
+                UnknownRequestError, ConnectionError, SignatureExistError,
+                AttributeError, ValueError) as e:
+            set_context('send_transaction_case', value=e.__dict__)
+            capture_message(
+                'Error in StellarRepository.send_transaction', level='error')
             raise e
 
     # @staticmethod
@@ -261,19 +271,29 @@ class StellarRepository(Repository):
             .set_timeout(settings.DEFAULT_TIMEOUT)
             .build()
         )
-
-        stellar_transaction.sign(recipient_keypair)
-        result = server.submit_transaction(stellar_transaction)
-        return result.get('successful', False)
+        try: 
+            stellar_transaction.sign(recipient_keypair)
+            result = server.submit_transaction(stellar_transaction)
+            return result.get('successful', False)
+        except (NotFoundError, BadRequestError, BadResponseError,
+                UnknownRequestError, ConnectionError, SignatureExistError,
+                AttributeError, ValueError) as e:
+            set_context('change_trust_operation_case', value=e.__dict__)
+            capture_message(
+                'Error in StellarRepository.change_trust_operation', level='error')
+            raise e
 
     def check_transaction_result(result_xdr: str) -> bool:
         """Method for checking result of stellar transaction"""
-        transaction_result = TransactionResult.from_xdr(result_xdr)
         try:
+            transaction_result = TransactionResult.from_xdr(result_xdr)
             transaction = transaction_result.result.results[0]
             return transaction.tr.payment_result.code == PaymentResultCode.PAYMENT_SUCCESS
-        except IndexError:
+        except Exception as e:
+            set_context('check_transaction_result_case', value=e.__dict__)
+            capture_message('Error in StellarRepository.check_transaction_result', level='error')
             return False
+
 
 
 class NoSignaturesFound(Exception):

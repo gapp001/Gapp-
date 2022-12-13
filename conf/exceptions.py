@@ -1,8 +1,8 @@
 class AppBaseException(Exception):
-    message: str = ''
+    message: str
 
     def __init__(self, message: str | None = None, *args: object) -> None:
-        self.message = message or self.message
+        self.message = message or ''
         super().__init__(self.message)
 
 
