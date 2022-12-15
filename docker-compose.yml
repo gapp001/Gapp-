@@ -29,7 +29,7 @@ services:
   stellar_ms_celery:
     build: .
     container_name: stellar_ms_celery
-    command: bash -c "celery -A conf worker l INFO"
+    command: bash -c "celery -A conf worker -l INFO"
     env_file:
       - ./.env
     depends_on:
