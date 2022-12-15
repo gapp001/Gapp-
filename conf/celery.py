@@ -61,7 +61,7 @@ def setup_periodic_tasks(sender, **kwargs):
 
 
 @app.task(name='initial_accrual_stellar_accounts_task')
-@task_blocker(task_key='initial_accrual_stellar_accounts_task', key_ttl=300, can_ignore_lock=True)
+@task_blocker(task_key='initial_accrual_stellar_accounts_task', key_ttl=300, )
 def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
     """
         Function for retrieving `StellarAccount` objects
@@ -200,7 +200,7 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
 
 
 @app.task(name='get_stellar_accounts_from_django_task')
-@task_blocker(task_key='get_stellar_accounts_from_django_task', key_ttl=300, can_ignore_lock=True)
+@task_blocker(task_key='get_stellar_accounts_from_django_task', key_ttl=300, )
 def get_stellar_accounts_from_django_task(conn: Redis | None = None):
     """
         Function for retrieving `StellarAccount` objects
@@ -327,7 +327,7 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
 
 
 @app.task(name='send_updated_stellar_accounts_to_django')
-@task_blocker(task_key='send_updated_stellar_accounts_to_django', key_ttl=300, can_ignore_lock=True)
+@task_blocker(task_key='send_updated_stellar_accounts_to_django', key_ttl=300, )
 def send_updated_stellar_accounts_to_django_task(conn=None):
     """
         Function for sending `GAStellarAccountBoundedSchema` data to Django-server
@@ -449,7 +449,7 @@ def configure_credentials_from_django_task(conn: Redis):
 
 
 @app.task(name='send_stellar_transactions_task')
-@task_blocker(task_key='send_stellar_transactions_task', key_ttl=300, can_ignore_lock=True)
+@task_blocker(task_key='send_stellar_transactions_task', key_ttl=300, )
 def send_transactions_to_stellar_task(conn=None):
     print('send_transactions_to_stellar_task')
     try:
