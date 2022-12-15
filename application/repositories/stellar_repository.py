@@ -12,7 +12,7 @@ from sentry_sdk import set_context, capture_message
 
 
 from application.schemas import (
-    GATransactionSchema, StellarPaymentTransactionSchema, TransactionResultSchema)
+    GATransactionSchema, StellarPaymentTransactionSchema, StellarWallet, TransactionResultSchema)
 from conf.exceptions import NoRecipientAccountFound
 
 from conf.settings import settings
@@ -129,13 +129,13 @@ class StellarRepository(Repository):
 
     @staticmethod
     def send_transaction(server: Server,
-                         ga_transaction_id: int,
                          amount: str | Decimal,
                          recipient_public_key: str,
                          issuer_keypair: Keypair,
                          issuer_account: Account,
                          base_fee: int,
-                         asset: Asset) -> StellarPaymentTransactionSchema:
+                         asset: Asset,
+                         ga_transaction_id: int | None = None, ) -> StellarPaymentTransactionSchema:
         '''
         Send asset from issuing accout to receiving account.
         Основная функция, которая создает, подписывает и отправляет транзакцию в сеть Stellar.
@@ -283,6 +283,7 @@ class StellarRepository(Repository):
                 'Error in StellarRepository.change_trust_operation', level='error')
             raise e
 
+    @staticmethod
     def check_transaction_result(result_xdr: str) -> bool:
         """Method for checking result of stellar transaction"""
         try:
@@ -293,6 +294,14 @@ class StellarRepository(Repository):
             set_context('check_transaction_result_case', value=e.__dict__)
             capture_message('Error in StellarRepository.check_transaction_result', level='error')
             return False
+
+    @staticmethod
+    def get_account_balances(raw_data: Dict[str, Any]) -> Dict[str, StellarWallet]:
+        """Returns a Dict of StellarWalletBalance objects"""
+        return {
+            balance.get('asset_code', 'native'): StellarWallet(**balance)
+            for balance in raw_data.get('balances')
+        }
 
 
 

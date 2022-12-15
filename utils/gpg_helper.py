@@ -135,7 +135,6 @@ class GPGHelper:
             if is_base64_encoded:
                 message: bool = GPGHelper.b64decode_data(value=message)
             __class__.import_key_from_env(is_private_key=True)
-            print(f'{settings.GPG_ROOT_KEY_PASSPHRASE=}')
             result: Crypt = GPGHelper.decrypt_data(
                 data=message.decode(), passphrase=settings.GPG_ROOT_KEY_PASSPHRASE)
             # print(f'{result.__dict__=}')

@@ -1,3 +1,4 @@
+from decimal import Decimal
 import json
 from typing import Any, Dict, List
 from sentry_sdk import capture_message, set_context
@@ -8,9 +9,9 @@ from stellar_sdk.account import Account
 from application.choices import StellarAccountStatus
 from application.credentials import (get_credentials_from_redis,
                                      set_credentials_into_redis)
-from application.repositories.django_repository import DjangoRepository
+from application.repositories.django_repository import DjangoRepository, DjangoURLS
 from application.repositories.stellar_repository import StellarRepository
-from application.schemas import DjangoAuthCredentials, GAStellarAccountBoundedSchema, GAStellarAccountSchema, StellarPaymentTransactionSchema
+from application.schemas import DjangoAuthCredentials, GAStellarAccountBoundedSchema, GAStellarAccountSchema, StellarPaymentTransactionSchema, StellarWallet
 from redis import Redis
 from conf.exceptions import NoIssuerAccountFound
 from conf.redis import RDB, celery_blocker, task_blocker
@@ -43,6 +44,11 @@ def setup_periodic_tasks(sender, **kwargs):
         name=f'Sending `GAStellarAccountBoundedSchema` data to Django-server every 5 seconds'
     )
     sender.add_periodic_task(
+        5.0,
+        initial_accrual_stellar_accounts_task.s(),
+        name=f'Accrual of the starting balance to the user every 5 seconds'
+    )
+    sender.add_periodic_task(
         3.0,
         send_transactions_to_stellar_task.s(),
         name=f'Send data to Stellar every 3 seconds'
@@ -54,8 +60,147 @@ def setup_periodic_tasks(sender, **kwargs):
     )
 
 
+@app.task(name='initial_accrual_stellar_accounts_task')
+@task_blocker(task_key='initial_accrual_stellar_accounts_task', key_ttl=300, can_ignore_lock=True)
+def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
+    """
+        Function for retrieving `StellarAccount` objects
+        with status `fulfilled` from Django-server and initial accrual of funds
+    """
+    timeout = 8.0
+
+    # This prefix used for Redis key
+    PREFIX: str = 'accrual_funds'
+
+    try:
+        conn = conn or RDB.get_redis_pool()
+        with requests.Session() as session:
+            credentials: DjangoAuthCredentials = get_credentials_from_redis(
+                conn=conn, session=session, timeout=timeout)
+
+            stellar_accounts: List[GAStellarAccountSchema] = DjangoRepository.get_stellar_accounts_with_balances(
+                session=session,
+                timeout=timeout,
+                access_token=credentials.access_token
+            )
+
+            if stellar_accounts:
+                successful_deposit_accounts: List[GAStellarAccountBoundedSchema | None] = []
+
+                server: Server = Server(settings.HORIZON_URL)
+                issuer_keypair = Keypair.from_secret(
+                    secret=settings.ISSUER_SECRET_KEY)
+                issuer_account: Account | None = StellarRepository.get_account(
+                    server=server,
+                    public_key=issuer_keypair.public_key,
+                )
+
+                if not issuer_account:
+                    raise NoIssuerAccountFound
+
+                ga_ngn_asset: Asset = StellarRepository.get_asset(
+                    issuer_public_key=issuer_keypair.public_key,
+                    currency=settings.NGN_CURRENCY,
+                )
+                # ga_usd_asset: Asset = StellarRepository.get_asset(
+                #     issuer_public_key=issuer_keypair.public_key,
+                #     currency=settings.USD_CURRENCY,
+                # )
+                base_fee: int = server.fetch_base_fee()
+
+                
+                for account in stellar_accounts:
+                    if not account.ngn_balance:
+                        set_context(
+                            'initial_accrual_stellar_accounts_task_case',
+                            value=dict(public_key=account.public_key, )
+                        )
+                        capture_message(
+                            'Django ngn_balance is None (initial_accrual_stellar_accounts_task_case)', level='error')
+                        continue
+
+                    existing_account: Account | None = StellarRepository.get_account(
+                        server=server,
+                        public_key=account.public_key)
+
+                    if not existing_account:
+                        set_context(
+                            'initial_accrual_stellar_accounts_task_case',
+                            value=dict(public_key=account.public_key, )
+                        )
+                        capture_message(
+                            'Stellar account not found (initial_accrual_stellar_accounts_task_case)', level='error')
+                        continue
+
+                    balances: Dict[str, StellarWallet] = StellarRepository.get_account_balances(
+                        raw_data=existing_account.raw_data)
+                    ga_ngn_stellar_wallet: StellarWallet = balances.get(
+                        settings.GA_NGN_ASSET_CODE)
+
+                    if not ga_ngn_stellar_wallet:
+                        set_context(
+                            'initial_accrual_stellar_accounts_task_case',
+                            value=dict(public_key=account.public_key, )
+                        )
+                        capture_message(
+                            'GA_NGN Stellar wallet not found (initial_accrual_stellar_accounts_task_case)', level='error')
+                        continue
+
+                    if ga_ngn_stellar_wallet.balance >= account.ngn_balance:
+                        # It means that this Django StellarAccount can set is_initial_accrued_money to True
+                        successful_deposit_accounts.append(GAStellarAccountBoundedSchema(pk=account.pk, is_initial_accrued_money=True))
+                        continue
+
+                    amount: Decimal = account.ngn_balance - ga_ngn_stellar_wallet.balance
+
+                    transaction_result: StellarPaymentTransactionSchema = StellarRepository.send_transaction(
+                        amount=amount,
+                        recipient_public_key=account.public_key,
+                        server=server,
+                        issuer_keypair=issuer_keypair,
+                        issuer_account=issuer_account,
+                        base_fee=base_fee,
+                        asset=ga_ngn_asset
+                    )
+
+                    is_transaction_succeed: bool = StellarRepository.check_transaction_result(
+                        result_xdr=transaction_result.result_xdr)
+
+                    if not is_transaction_succeed:
+                        set_context(
+                            'initial_accrual_stellar_accounts_task_case',
+                            value=transaction_result.dict()
+                        )
+                        capture_message(
+                            'Stellar transaction not completed (initial_accrual_stellar_accounts_task_case)', level='error')
+
+                        continue
+
+                    if is_transaction_succeed:
+                        # It means that this Django StellarAccount can set is_initial_accrued_money to True
+                        successful_deposit_accounts.append(GAStellarAccountBoundedSchema(pk=account.pk, is_initial_accrued_money=True))
+
+                if successful_deposit_accounts:
+                    request_data: List[Dict[str, Any]] = [_account.dict() for _account in successful_deposit_accounts]
+                    status_code = DjangoRepository.send_updated_stellar_accounts(
+                        session=session,
+                        timeout=timeout,
+                        access_token=credentials.access_token,
+                        data=request_data,
+                        url=DjangoURLS.POST_SEND_UPDATED_BALANCES_STELLAR_ACCOUNTS
+                    )
+   
+        print(f'DONE initial_accrual_stellar_accounts_task\n')
+    except Exception as e:
+        set_context('initial_accrual_stellar_accounts_task_case',
+                    value=e.__dict__)
+        capture_message(
+            'Error in initial_accrual_stellar_accounts_task', level='error')
+        raise e
+
+
 @app.task(name='get_stellar_accounts_from_django_task')
-@task_blocker(task_key='get_stellar_accounts_from_django_task', key_ttl=300)
+@task_blocker(task_key='get_stellar_accounts_from_django_task', key_ttl=300, can_ignore_lock=True)
 def get_stellar_accounts_from_django_task(conn: Redis | None = None):
     """
         Function for retrieving `StellarAccount` objects
@@ -83,7 +228,6 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
                     server=server,
                     public_key=issuer_keypair.public_key,
                 )
-                
 
                 if not issuer_account:
                     raise NoIssuerAccountFound
@@ -123,6 +267,11 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
                                 continue
                             else:
                                 can_skip_create_operation = True
+
+                        if not account.private_key:
+                            set_context('get_stellar_accounts_from_django_task_case', value=dict(account=account.__dict__))
+                            capture_message('Error in get_stellar_accounts_from_django_task (account.private_key is None)', level='error')
+                            continue
                         # Decrypting Stellar secret key
                         decrypted_private_key: bytes = GPGHelper.root_key_helper.decrypt_message(
                             message=account.private_key).data
@@ -170,11 +319,15 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
                     pipe.reset()
         print(f'DONE get_stellar_accounts_from_django_task\n')
     except Exception as e:
-        set_context('get_stellar_accounts_from_django_task_case', value=e.__dict__)
-        capture_message('Error in get_stellar_accounts_from_django_task', level='error')
+        set_context('get_stellar_accounts_from_django_task_case',
+                    value=e.__dict__)
+        capture_message(
+            'Error in get_stellar_accounts_from_django_task', level='error')
+        raise e
+
 
 @app.task(name='send_updated_stellar_accounts_to_django')
-@task_blocker(task_key='send_updated_stellar_accounts_to_django', key_ttl=300)
+@task_blocker(task_key='send_updated_stellar_accounts_to_django', key_ttl=300, can_ignore_lock=True)
 def send_updated_stellar_accounts_to_django_task(conn=None):
     """
         Function for sending `GAStellarAccountBoundedSchema` data to Django-server
@@ -198,6 +351,7 @@ def send_updated_stellar_accounts_to_django_task(conn=None):
                     timeout=timeout,
                     access_token=credentials.access_token,
                     data=request_data,
+                    url=DjangoURLS.POST_SEND_UPDATED_STELLAR_ACCOUNTS_STATUS
                 )
                 result: bool = status_code == 200
                 if result:
@@ -207,8 +361,10 @@ def send_updated_stellar_accounts_to_django_task(conn=None):
             print('DONE send_updated_stellar_accounts_to_django_task DONE')
             return False
     except Exception as e:
-        set_context('send_updated_stellar_accounts_to_django_task', value=e.__dict__)
-        capture_message('Error in send_updated_stellar_accounts_to_django_task', level='error')
+        set_context('send_updated_stellar_accounts_to_django_task',
+                    value=e.__dict__)
+        capture_message(
+            'Error in send_updated_stellar_accounts_to_django_task', level='error')
 
 
 # # @app.task(name='get_stellar_accounts_from_django_task')
@@ -288,10 +444,12 @@ def configure_credentials_from_django_task(conn: Redis):
             return {'success': True, 'updated': True}
     except Exception as e:
         set_context('configure_credentials_from_django_task', value=e.__dict__)
-        capture_message('Error in configure_credentials_from_django_task', level='error')
+        capture_message(
+            'Error in configure_credentials_from_django_task', level='error')
+
 
 @app.task(name='send_stellar_transactions_task')
-@task_blocker(task_key='send_stellar_transactions_task', key_ttl=300, can_ignore_block=True)
+@task_blocker(task_key='send_stellar_transactions_task', key_ttl=300, can_ignore_lock=True)
 def send_transactions_to_stellar_task(conn=None):
     print('send_transactions_to_stellar_task')
     try:
@@ -322,14 +480,16 @@ def send_transactions_to_stellar_task(conn=None):
 
                 # Create an object to represent the new asset
                 # Получаем валюту GA coin TODO разберись
-            
+
                 with conn.pipeline(transaction=True) as pipe:
                     for ga_transaction in transactions:
-                        stellar_transaction_is_exists: bool = conn.hget(RDB.TRANSACTIONS_KEY, ga_transaction.id)
+                        stellar_transaction_is_exists: bool = conn.hget(
+                            RDB.TRANSACTIONS_KEY, ga_transaction.id)
                         if stellar_transaction_is_exists:
                             continue
 
-                        asset: Asset = StellarRepository.get_asset(issuer_public_key=issuer_keypair.public_key, currency=ga_transaction.amount_currency)
+                        asset: Asset = StellarRepository.get_asset(
+                            issuer_public_key=issuer_keypair.public_key, currency=ga_transaction.amount_currency)
                         recipient_public_key: str = ga_transaction.related_user.stellar_account.public_key
                         try:
                             transaction_result: StellarPaymentTransactionSchema = StellarRepository.send_transaction(
@@ -358,7 +518,8 @@ def send_transactions_to_stellar_task(conn=None):
         return {'success': True}
     except Exception as e:
         set_context('send_transactions_to_stellar_task', value=e.__dict__)
-        capture_message('Error in send_transactions_to_stellar_task', level='error')
+        capture_message(
+            'Error in send_transactions_to_stellar_task', level='error')
 
 
 @app.task(name='send_transaction_result_to_django_task')
@@ -376,8 +537,10 @@ def send_transaction_result_to_django_task(conn=None):
                     conn=conn, session=session, timeout=timeout)
                 response = session.post(
                     url=f'{settings.DJANGO_DOMAIN}/transactions/stellar/webhook/',
-                    headers={'Authorization': f'Bearer {credentials.access_token}'},
-                    json=[json.loads(transaction) for transaction in transactions.values()],
+                    headers={
+                        'Authorization': f'Bearer {credentials.access_token}'},
+                    json=[json.loads(transaction)
+                          for transaction in transactions.values()],
                 )
                 response.raise_for_status()
                 conn.hdel('transactions', *transactions.keys())
@@ -385,4 +548,5 @@ def send_transaction_result_to_django_task(conn=None):
                 return response.status_code == 200
     except Exception as e:
         set_context('send_transaction_result_to_django_task', value=e.__dict__)
-        capture_message('Error in send_transaction_result_to_django_task', level='error')
+        capture_message(
+            'Error in send_transaction_result_to_django_task', level='error')

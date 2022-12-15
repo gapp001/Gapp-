@@ -38,9 +38,10 @@ class GAStellarAccountSchema(BaseModel):
     pk: int
     user_id: int
     public_key: str
-    private_key: str | None
     status: str
     created_at: str
+    private_key: str | None = None
+    ngn_balance: Decimal | None = None
 
 
 class GAUserSchema(BaseModel):
@@ -103,3 +104,23 @@ class GAStellarAccountBoundedSchema(BaseModel):
     pk: int
     status: str
     private_key: str | None
+
+class StellarWallet(BaseModel):
+    """Pydantic model for stellar_account.raw_data.get('balances'), where stellar_account is a stellar_sdk.account.Account object"""
+    balance: Decimal
+    buying_liabilities: str
+    selling_liabilities: str
+    asset_type: str
+    limit: str | None = None
+    last_modified_ledger: int | None = None
+    is_authorized: bool | None = None
+    is_authorized_to_maintain_liabilities: bool | None = None
+    asset_code: str | None = None
+    asset_issuer: str | None = None
+
+
+class GAStellarAccountBoundedSchema(BaseModel):
+    pk: int
+    status: str | None = None
+    private_key: str | None
+    is_initial_accrued_money: bool | None = None

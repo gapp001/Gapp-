@@ -21,18 +21,18 @@ class RDB:
         return redis.Redis.from_url(url=settings.REDIS_HOST, encoding="utf-8", decode_responses=True)
 
     @staticmethod
-    def set_bounded_stellar_account(pipe: redis.client.Pipeline, bounded_account: GAStellarAccountBoundedSchema):
+    def set_bounded_stellar_account(pipe: redis.client.Pipeline, bounded_account: GAStellarAccountBoundedSchema, prefix: str | None = None):
         """Method for setting up GAStellarAccountBoundedSchema data to Redis"""
         pipe.hset(
-            __class__.STELLAR_ACCOUNTS_KEY,
+            f'{prefix}{__class__.STELLAR_ACCOUNTS_KEY}',
             bounded_account.pk,
             json.dumps(bounded_account.__dict__)
         )
 
     @staticmethod
-    def get_bounded_stellar_accounts_data(conn: redis.Redis) -> Dict[int, str] | None:
+    def get_bounded_stellar_accounts_data(conn: redis.Redis, prefix: str | None = None) -> Dict[int, str] | None:
         """Method for retrieving GAStellarAccountBoundedSchema data from Redis"""
-        return conn.hgetall(__class__.STELLAR_ACCOUNTS_KEY)
+        return conn.hgetall(f'{prefix}{__class__.STELLAR_ACCOUNTS_KEY}')
          
 
     @staticmethod
@@ -58,7 +58,7 @@ class RDB:
         return _conn.delete(task_key)
 
 
-def task_blocker(task_key: str, key_ttl: float = 120.0, can_ignore_block: bool = False):
+def task_blocker(task_key: str, key_ttl: float = 120.0, can_ignore_lock: bool = False):
     """Decoration function for using blocking running celery task"""
     conn = RDB.get_redis_pool()
 
@@ -68,7 +68,7 @@ def task_blocker(task_key: str, key_ttl: float = 120.0, can_ignore_block: bool =
                 task_key=task_key, conn=conn)
             can_start_task: bool = task_status != RDB.RUNNING_TASK_VALUE
 
-            if can_ignore_block:
+            if can_ignore_lock:
                 can_start_task = True
 
             if not can_start_task:
@@ -84,6 +84,8 @@ def task_blocker(task_key: str, key_ttl: float = 120.0, can_ignore_block: bool =
                 result: Any = function(
                     *args, **kwargs) if can_start_task else None
                 return result
+            except Exception as e:
+                raise e
             finally:
                 if can_start_task:
                     # Removing task key from Redis
