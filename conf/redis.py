@@ -79,11 +79,11 @@ def task_blocker(task_key: str, key_ttl: float = 120.0, can_ignore_lock: bool = 
                 RDB.set_task_status(task_key=task_key, ttl=key_ttl, conn=conn)
             kwargs.update(conn=conn)
             try:
-                # Running Celery task
-                # Blocking running task if prev task not completed
-                result: Any = function(
-                    *args, **kwargs) if can_start_task else None
-                return result
+                if can_start_task:
+                    # Running Celery task
+                    # Blocking running task if prev task not completed
+                    result: Any = function(*args, **kwargs)
+                    return result
             except Exception as e:
                 raise e
             finally:

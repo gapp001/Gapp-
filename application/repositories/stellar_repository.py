@@ -3,16 +3,14 @@ import requests
 from typing import Any, Dict, List, Optional
 from stellar_sdk import (Account, Asset, Keypair, Network, Server,
                          TransactionBuilder)
-from stellar_sdk.exceptions import BadRequestError, BadResponseError
-from stellar_sdk.exceptions import NotFoundError, BadRequestError, BadResponseError, UnknownRequestError, ConnectionError, SignatureExistError
+from stellar_sdk.exceptions import (NotFoundError, BadRequestError, BadResponseError, UnknownRequestError, ConnectionError, SignatureExistError)
 from stellar_sdk.xdr.transaction_result import TransactionResult
 from stellar_sdk.xdr.payment_result_code import PaymentResultCode
 from stellar_sdk.decorated_signature import DecoratedSignature
 from sentry_sdk import set_context, capture_message
 
 
-from application.schemas import (
-    GATransactionSchema, StellarPaymentTransactionSchema, StellarWallet, TransactionResultSchema)
+from application.schemas import (GATransactionSchema, StellarPaymentTransactionSchema, StellarWallet, TransactionResultSchema)
 from conf.exceptions import NoRecipientAccountFound
 
 from conf.settings import settings
@@ -303,7 +301,18 @@ class StellarRepository(Repository):
             for balance in raw_data.get('balances')
         }
 
+    @staticmethod
+    def compare_balances(stellar_wallet_balance: Decimal, ga_wallet_balance: Decimal):
+        """
+            Method for comparing balances
+            @Returns: bool a parameter indicating whether it is necessary to update the balance of the stellar wallet
+        """
+        if stellar_wallet_balance >= ga_wallet_balance:
+            # Stellar wallet balance not needed for updating 
+            return False
 
+        # Stellar wallet balance needed for updating 
+        return True
 
 class NoSignaturesFound(Exception):
     ...

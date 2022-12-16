@@ -42,6 +42,7 @@ class GAStellarAccountSchema(BaseModel):
     created_at: str
     private_key: str | None = None
     ngn_balance: Decimal | None = None
+    usd_balance: Decimal | None = None
 
 
 class GAUserSchema(BaseModel):
@@ -124,3 +125,5 @@ class GAStellarAccountBoundedSchema(BaseModel):
     status: str | None = None
     private_key: str | None
     is_initial_accrued_money: bool | None = None
+
+

@@ -20,6 +20,7 @@ class DjangoURLS:
     POST_GET_ACCESS_REFRESH_TOKENS: str = '/auth-microservice/auth/'
     POST_GET_REFRESHED_ACCESS_REFRESH_TOKENS: str = '/auth-microservice/refresh/'
 
+    POST_SEND_STELLAR_WEBHOOK: str = '/transactions/stellar/webhook/'
 
 
 class DjangoRepository(Repository):
@@ -139,8 +140,7 @@ class DjangoRepository(Repository):
             return response.status_code
         except HTTPError as e:
             set_context('send_updated_stellar_accounts_case', value=e.__dict__)
-            capture_message(
-                'Error in DjangoRepository.send_updated_stellar_accounts', level='error')
+            capture_message('Error in DjangoRepository.send_updated_stellar_accounts', level='error')
 
     def get_transactions(session: Session,
                          timeout: float,
