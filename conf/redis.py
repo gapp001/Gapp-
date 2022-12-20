@@ -29,14 +29,13 @@ class RDB:
             json.dumps(bounded_account.__dict__)
         )
 
-
     @staticmethod
     def delete_stellar_accounts(conn: redis.Redis, name: str, *keys: List, prefix: str = ''):
         """Method for setting up GAStellarAccountBoundedSchema data to Redis"""
         conn.hdel(f'{prefix}{name}', *keys)
 
     @staticmethod
-    def get_bounded_stellar_accounts_data(conn: redis.Redis, prefix: str | None = None) -> Dict[int, str] | None:
+    def get_bounded_stellar_accounts_data(conn: redis.Redis, prefix: str = '') -> Dict[int, str] | None:
         """Method for retrieving GAStellarAccountBoundedSchema data from Redis"""
         return conn.hgetall(f'{prefix}{__class__.STELLAR_ACCOUNTS_KEY}')
          
