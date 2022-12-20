@@ -45,6 +45,7 @@ class DjangoRepository(Repository):
             set_context('get_credentials_case', value=e.__dict__)
             capture_message(
                 'Error in DjangoRepository.get_credentials', level='error')
+            raise e
 
     @staticmethod
     def get_refreshed_credentials(session: Session,
@@ -65,6 +66,7 @@ class DjangoRepository(Repository):
             set_context('get_refreshed_credentials_case', value=e.__dict__)
             capture_message(
                 'Error in DjangoRepository.get_refreshed_credentials', level='error')
+            raise e
 
     @staticmethod
     def get_stellar_accounts(session: Session,
@@ -86,6 +88,7 @@ class DjangoRepository(Repository):
             set_context('get_stellar_accounts_case', value=e.__dict__)
             capture_message(
                 'Error in DjangoRepository.get_stellar_accounts', level='error')
+            raise e
 
     @staticmethod
     def get_stellar_accounts_with_balances(session: Session,
@@ -108,6 +111,7 @@ class DjangoRepository(Repository):
                         value=e.__dict__)
             capture_message(
                 'Error in DjangoRepository.get_stellar_accounts_with_balances', level='error')
+            raise e
 
     def send_updated_stellar_accounts(session: Session,
                                       timeout: float,
@@ -141,6 +145,7 @@ class DjangoRepository(Repository):
         except HTTPError as e:
             set_context('send_updated_stellar_accounts_case', value=e.__dict__)
             capture_message('Error in DjangoRepository.send_updated_stellar_accounts', level='error')
+            raise e
 
     def get_transactions(session: Session,
                          timeout: float,
@@ -161,5 +166,6 @@ class DjangoRepository(Repository):
             set_context('get_transactions_from_django_case', value=e.__dict__)
             capture_message(
                 'Error in DjangoRepository.get_transactions', level='error')
+            raise e
 
 

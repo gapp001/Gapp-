@@ -21,13 +21,19 @@ class RDB:
         return redis.Redis.from_url(url=settings.REDIS_HOST, encoding="utf-8", decode_responses=True)
 
     @staticmethod
-    def set_bounded_stellar_account(pipe: redis.client.Pipeline, bounded_account: GAStellarAccountBoundedSchema, prefix: str | None = None):
+    def set_bounded_stellar_account(pipe: redis.client.Pipeline, bounded_account: GAStellarAccountBoundedSchema, prefix: str = ''):
         """Method for setting up GAStellarAccountBoundedSchema data to Redis"""
         pipe.hset(
             f'{prefix}{__class__.STELLAR_ACCOUNTS_KEY}',
             bounded_account.pk,
             json.dumps(bounded_account.__dict__)
         )
+
+
+    @staticmethod
+    def delete_stellar_accounts(conn: redis.Redis, name: str, *keys: List, prefix: str = ''):
+        """Method for setting up GAStellarAccountBoundedSchema data to Redis"""
+        conn.hdel(f'{prefix}{name}', *keys)
 
     @staticmethod
     def get_bounded_stellar_accounts_data(conn: redis.Redis, prefix: str | None = None) -> Dict[int, str] | None:

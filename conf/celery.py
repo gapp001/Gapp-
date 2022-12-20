@@ -35,7 +35,7 @@ def setup_periodic_tasks(sender, **kwargs):
         name='Configure django credentials every 55 minutes'
     )
     sender.add_periodic_task(
-        3.0,
+        10.0,
         get_stellar_accounts_from_django_task.s(),
         name=f'Retrieving StellarAccount objects every 3 seconds'
     )
@@ -45,12 +45,12 @@ def setup_periodic_tasks(sender, **kwargs):
         name=f'Sending `GAStellarAccountBoundedSchema` data to Django-server every 5 seconds'
     )
     sender.add_periodic_task(
-        5.0,
+        15.0,
         initial_accrual_stellar_accounts_task.s(),
         name=f'Accrual of the starting balance to the user every 5 seconds'
     )
     sender.add_periodic_task(
-        3.0,
+        8.0,
         send_transactions_to_stellar_task.s(),
         name=f'Send data to Stellar every 3 seconds'
     )
@@ -395,7 +395,8 @@ def send_updated_stellar_accounts_to_django_task(conn=None):
                 )
                 result: bool = status_code == 200
                 if result:
-                    conn.hdel(RDB.STELLAR_ACCOUNTS_KEY, *accounts.keys())
+                    RDB.delete_stellar_accounts(conn=conn, name=RDB.STELLAR_ACCOUNTS_KEY, keys=accounts.keys())
+                    # conn.hdel(RDB.STELLAR_ACCOUNTS_KEY, *accounts.keys())
                 print('DONE send_updated_stellar_accounts_to_django_task DONE')
                 return result
             print('DONE send_updated_stellar_accounts_to_django_task DONE')
@@ -405,7 +406,7 @@ def send_updated_stellar_accounts_to_django_task(conn=None):
                     value=e.__dict__)
         capture_message(
             'Error in send_updated_stellar_accounts_to_django_task', level='error')
-
+        raise e
 
 # # @app.task(name='get_stellar_accounts_from_django_task')
 # # @task_blocker(task_key='get_stellar_accounts_from_django_task')
@@ -486,6 +487,7 @@ def configure_credentials_from_django_task(conn: Redis):
         set_context('configure_credentials_from_django_task', value=e.__dict__)
         capture_message(
             'Error in configure_credentials_from_django_task', level='error')
+        raise e
 
 
 @app.task(name='send_stellar_transactions_task')
@@ -560,6 +562,7 @@ def send_transactions_to_stellar_task(conn=None):
         set_context('send_transactions_to_stellar_task', value=e.__dict__)
         capture_message(
             'Error in send_transactions_to_stellar_task', level='error')
+        raise e
 
 
 @app.task(name='send_transaction_result_to_django_task')
@@ -589,3 +592,4 @@ def send_transaction_result_to_django_task(conn=None):
     except Exception as e:
         set_context('send_transaction_result_to_django_task', value=e.__dict__)
         capture_message('Error in send_transaction_result_to_django_task', level='error')
+        raise e
