@@ -30,7 +30,7 @@ class RDB:
         )
 
     @staticmethod
-    def delete_stellar_accounts(conn: redis.Redis, name: str, *keys: List, prefix: str = ''):
+    def delete_stellar_accounts(conn: redis.Redis, name: str, keys: List, prefix: str = ''):
         """Method for setting up GAStellarAccountBoundedSchema data to Redis"""
         conn.hdel(f'{prefix}{name}', *keys)
 
