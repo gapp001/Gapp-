@@ -111,15 +111,14 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
 
                 
                 for account in stellar_accounts:
-                    if not account.ngn_balance or not account.usd_balance:
+                    if account.ngn_balance == None or account.usd_balance == None:
                         not_founded_balance: str = 'ngn_balance' if not account.ngn_balance else 'usd_balance'
 
                         set_context(
                             'initial_accrual_stellar_accounts_task_case',
                             value=dict(public_key=account.public_key, )
                         )
-                        capture_message(
-                            f'Django {not_founded_balance} is None (initial_accrual_stellar_accounts_task_case)', level='error')
+                        capture_message(f'Django {not_founded_balance} is None (initial_accrual_stellar_accounts_task_case)', level='error')
                         continue
 
                     existing_account: Account | None = StellarRepository.get_account(
