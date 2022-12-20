@@ -149,6 +149,3 @@ class DecryptionError(Exception):
     ...
 
 
-"""
-b'-----BEGIN PGP MESSAGE-----\r\n\r\nhQEMA6GwKohFMdasAQgAik1868oOVVcqhH9Jmn8n91BL06j1liexwiJcP1RJZVD0\r\nLdCah7GsgihgHNhb353iK1PTpKPf2sBjDe70/RIjfuaiE04DCSEEgANNsjq4gNLm\r\nbWnz3ELerPuOwQaQvQgX40YPS98WK3VrTN/QvcdLVNEr3fnXt7vbU8WkTe6hQyZq\r\n2SgViVvNnxTbPANLP14+0Bw594jaRjwidtmmpu3cLNTUOjsN+oxtfhToziEwtkyB\r\n56Y38pQSySVhY5pUa2jyHxpbDhwc0kl9H0SFWhmTu4pr6qNfr8vfUjEW9rIVFJEt\r\nylio+o+KtN/IT22NzTaF9T6/aVoocTEuiJjKhbOTIdR9AQkCECpQubTiEC1dpv6A\r\nUHte8Ah6sr4FBuWN3r/+ZLeNGCpSzjjGn09IvzP8fsf7TvQ/RSUNxwQyMYwziAhd\r\nasywzKqT7re872UFPOmailXtWDqLnbP7xSCWXnsnsFvHPXS8IgFruSJ8p8SZoMBN\r\nxdgOf72FA9kLv6AYktg=\r\n=2DQY\r\n-----END PGP MESSAGE-----\r\n'
-"""

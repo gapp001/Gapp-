@@ -311,9 +311,14 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
                             set_context('get_stellar_accounts_from_django_task_case', value=dict(account=account.__dict__))
                             capture_message('Error in get_stellar_accounts_from_django_task (account.private_key is None)', level='error')
                             continue
+
                         # Decrypting Stellar secret key
-                        decrypted_private_key: bytes = GPGHelper.root_key_helper.decrypt_message(
-                            message=account.private_key).data
+                        try:
+                            decrypted_private_key: bytes = GPGHelper.root_key_helper.decrypt_message(message=account.private_key).data
+                        except Exception as e:
+                            set_context('get_stellar_accounts_from_django_task_case', value=dict(account=account.__dict__, ))
+                            capture_message('Error in get_stellar_accounts_from_django_task (account.private_key not decrypted)', level='error')
+                            continue
 
                         if isinstance(decrypted_private_key, bytes):
                             decrypted_private_key: str = decrypted_private_key.decode()
