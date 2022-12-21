@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     DEV_SENTRY_ENV: str = 'dev'
     PROD_SENTRY_ENV: str = 'prod'
 
+    # Logging configurations
+    LOG_LEVEL: int = logging.NOTSET
+
+
     class Config:
         env_file = '.env'
 
@@ -64,10 +68,11 @@ def configure_sentry():
 
 def configure_logger():
     """Functuion for initialize Logger"""
-    if settings.SENTRY_ENV != settings.PROD_SENTRY_ENV:
+    if settings.LOG_LEVEL == logging.DEBUG or settings.SENTRY_ENV != settings.PROD_SENTRY_ENV:
         LOGGER.setLevel(logging.DEBUG)
-    else:
-        LOGGER.setLevel(logging.NOTSET)
+        return
+    
+    LOGGER.setLevel(logging.NOTSET)
 
 
 def initialize():
