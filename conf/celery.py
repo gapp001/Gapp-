@@ -15,7 +15,7 @@ from application.schemas import DjangoAuthCredentials, GAStellarAccountBoundedSc
 from redis import Redis
 from conf.exceptions import NoIssuerAccountFound
 from conf.redis import RDB, celery_blocker, task_blocker
-from conf.settings import settings
+from conf.settings import LOGGER, settings
 from utils.gpg_helper import GPGHelper
 from stellar_sdk.exceptions import (NotFoundError, BadRequestError, BadResponseError, UnknownRequestError, ConnectionError, SignatureExistError)
 
@@ -229,7 +229,7 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
                         data=request_data, url=DjangoURLS.POST_SEND_UPDATED_BALANCES_STELLAR_ACCOUNTS
                     )
    
-        print(f'DONE initial_accrual_stellar_accounts_task\n')
+        LOGGER.debug(f'DONE initial_accrual_stellar_accounts_task\n')
     except Exception as e:
         set_context('initial_accrual_stellar_accounts_task_case',
                     value=e.__dict__)
@@ -257,8 +257,8 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
                 timeout=timeout,
                 access_token=credentials.access_token
             )
-            print(f'\nget_stellar_accounts_from_django_task')
-            print(f'{stellar_accounts=}')
+            LOGGER.debug(f'\nget_stellar_accounts_from_django_task')
+            LOGGER.debug(f'{stellar_accounts=}')
             if stellar_accounts:
                 server: Server = Server(settings.HORIZON_URL)
                 issuer_keypair = Keypair.from_secret(
@@ -361,7 +361,7 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
 
                     pipe.execute()
                     pipe.reset()
-        print(f'DONE get_stellar_accounts_from_django_task\n')
+        LOGGER.debug(f'DONE get_stellar_accounts_from_django_task\n')
     except Exception as e:
         set_context('get_stellar_accounts_from_django_task_case',
                     value=e.__dict__)
@@ -376,7 +376,7 @@ def send_updated_stellar_accounts_to_django_task(conn=None):
     """
         Function for sending `GAStellarAccountBoundedSchema` data to Django-server
     """
-    print('\nsend_updated_stellar_accounts_to_django_task')
+    LOGGER.debug('\nsend_updated_stellar_accounts_to_django_task')
     timeout = 8.0
     try:
         conn = conn or RDB.get_redis_pool()
@@ -389,7 +389,7 @@ def send_updated_stellar_accounts_to_django_task(conn=None):
                 account) for account in accounts.values()] if accounts else None
             if accounts:
                 # Sending data to Django-server
-                print(f'UPDATED STELLAR ACCOUNTS: {accounts=}')
+                LOGGER.debug(f'UPDATED STELLAR ACCOUNTS: {accounts=}')
                 status_code = DjangoRepository.send_updated_stellar_accounts(
                     session=session,
                     timeout=timeout,
@@ -401,9 +401,9 @@ def send_updated_stellar_accounts_to_django_task(conn=None):
                 if result:
                     RDB.delete_stellar_accounts(conn=conn, name=RDB.STELLAR_ACCOUNTS_KEY, keys=accounts.keys())
                     # conn.hdel(RDB.STELLAR_ACCOUNTS_KEY, *accounts.keys())
-                print('DONE send_updated_stellar_accounts_to_django_task DONE')
+                LOGGER.debug('DONE send_updated_stellar_accounts_to_django_task DONE')
                 return result
-            print('DONE send_updated_stellar_accounts_to_django_task DONE')
+            LOGGER.debug('DONE send_updated_stellar_accounts_to_django_task DONE')
             return False
     except Exception as e:
         set_context('send_updated_stellar_accounts_to_django_task',
@@ -420,12 +420,12 @@ def send_updated_stellar_accounts_to_django_task(conn=None):
 #         Function for retrieving `StellarAccount` objects
 #         with status `keypair_generated` from Django-server
 #     """
-#     # print('Started task get_stellar_accounts_from_django_task')
+#     # LOGGER.debug('Started task get_stellar_accounts_from_django_task')
 #     with celery_blocker(task_key='get_stellar_accounts_from_django_task') as blocker:
-#         print(f'{blocker.can_start_task=}')
-#         print(f'{blocker.conn=}')
+#         LOGGER.debug(f'{blocker.can_start_task=}')
+#         LOGGER.debug(f'{blocker.conn=}')
 #         if not blocker.can_start_task:
-#             print('TASK IS LOCKED')
+#             LOGGER.debug('TASK IS LOCKED')
 #             return
 #         timeout = 8.0
 
@@ -445,7 +445,7 @@ def send_updated_stellar_accounts_to_django_task(conn=None):
 #                         status=str(StellarAccountStatus.fulfilled.value),
 #                     ).__dict__
 #                 )
-#                 print(f'Append Account with pk {account.pk}. Go to sleep 10 sec')
+#                 LOGGER.debug(f'Append Account with pk {account.pk}. Go to sleep 10 sec')
 #                 time.sleep(10)
 
 #                 # TODO implement here logic of creation stellar accounts
@@ -456,8 +456,8 @@ def send_updated_stellar_accounts_to_django_task(conn=None):
 #                 access_token=credentials.access_token,
 #                 data=request_data,
 #             )
-#             # print(f'{stellar_accounts=}')
-#     print('Finished task get_stellar_accounts_from_django_task\n')
+#             # LOGGER.debug(f'{stellar_accounts=}')
+#     LOGGER.debug('Finished task get_stellar_accounts_from_django_task\n')
 
     # time.sleep(10)
 
@@ -497,7 +497,7 @@ def configure_credentials_from_django_task(conn: Redis):
 @app.task(name='send_stellar_transactions_task')
 @task_blocker(task_key='send_stellar_transactions_task', key_ttl=300, )
 def send_transactions_to_stellar_task(conn=None):
-    print('send_transactions_to_stellar_task')
+    LOGGER.debug('send_transactions_to_stellar_task')
     try:
         conn = conn or RDB.get_redis_pool()
         timeout = 8.0
@@ -551,7 +551,7 @@ def send_transactions_to_stellar_task(conn=None):
                         except Exception as e:
                             # here not catched exception to Sentry because it's catched in StellarRepository.send_transaction
                             transaction_result = None
-                        print(f'{transaction_result=}')
+                        LOGGER.debug(f'{transaction_result=}')
                         if transaction_result:
                             pipe.hset(
                                 RDB.TRANSACTIONS_KEY,
@@ -560,7 +560,7 @@ def send_transactions_to_stellar_task(conn=None):
                             )
                     pipe.execute()
                     pipe.reset()
-            print('DONE send_transactions_to_stellar_task')
+            LOGGER.debug('DONE send_transactions_to_stellar_task')
         return {'success': True}
     except Exception as e:
         set_context('send_transactions_to_stellar_task', value=e.__dict__)
@@ -572,13 +572,13 @@ def send_transactions_to_stellar_task(conn=None):
 @app.task(name='send_transaction_result_to_django_task')
 @task_blocker(task_key='send_transaction_result_to_django_task', key_ttl=300)
 def send_transaction_result_to_django_task(conn=None):
-    print('send_transaction_result_to_django_task')
+    LOGGER.debug('send_transaction_result_to_django_task')
     try:
         conn = conn or RDB.get_redis_pool()
         timeout = 8.0
         with requests.Session() as session:
             transactions = conn.hgetall('transactions')
-            print(f'{transactions=}')
+            LOGGER.debug(f'{transactions=}')
             if transactions:
                 credentials = get_credentials_from_redis(
                     conn=conn, session=session, timeout=timeout)
@@ -591,7 +591,7 @@ def send_transaction_result_to_django_task(conn=None):
                 )
                 response.raise_for_status()
                 conn.hdel('transactions', *transactions.keys())
-                print('DONE send_transaction_result_to_django_task')
+                LOGGER.debug('DONE send_transaction_result_to_django_task')
                 return response.status_code == 200
     except Exception as e:
         set_context('send_transaction_result_to_django_task', value=e.__dict__)

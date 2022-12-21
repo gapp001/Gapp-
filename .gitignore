@@ -125,3 +125,6 @@ out
 *.key
 *.pem
 poetry.lock
+
+/private_tests/
+run_docker.bat

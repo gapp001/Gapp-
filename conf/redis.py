@@ -6,7 +6,7 @@ import redis
 from application.choices import StellarAccountStatus
 from application.schemas import GAStellarAccountBoundedSchema
 
-from conf.settings import settings
+from conf.settings import LOGGER, settings
 
 
 class RDB:
@@ -77,7 +77,7 @@ def task_blocker(task_key: str, key_ttl: float = 120.0, can_ignore_lock: bool = 
                 can_start_task = True
 
             if not can_start_task:
-                print('Task starting is blocked! Try later')
+                LOGGER.debug('Task starting is blocked! Try later')
 
             else:
                 # Setting to Redis that the celery task are running
@@ -114,7 +114,7 @@ def celery_blocker(task_key: str):
     conn = RDB.get_redis_pool()
     task_status: int = RDB.get_task_status(task_key=task_key, conn=conn)
     can_start_task: bool = task_status != RDB.RUNNING_TASK_VALUE
-    print(f'{task_status=}')
+    LOGGER.debug(f'{task_status=}')
     try:
         if can_start_task:
             RDB.set_task_status(task_key=task_key, conn=conn)
@@ -123,8 +123,8 @@ def celery_blocker(task_key: str):
             conn=conn,
         )
     finally:
-        print(f'finally')
+        LOGGER.debug(f'finally')
         if not can_start_task:
-            print(f'not can_start_task')
+            LOGGER.debug(f'not can_start_task')
             RDB.remove_task_status(task_key=task_key, conn=conn)
         conn.close()

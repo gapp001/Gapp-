@@ -4,7 +4,7 @@ from typing import List, Optional
 from gnupg import GPG, GenKey, ImportResult, Crypt, TrustResult
 from base64 import b64encode, b64decode
 from conf.exceptions import Base64DecodeError
-from conf.settings import settings
+from conf.settings import settings, LOGGER
 
 
 gpg = GPG()
@@ -137,7 +137,7 @@ class GPGHelper:
             __class__.import_key_from_env(is_private_key=True)
             result: Crypt = GPGHelper.decrypt_data(
                 data=message.decode(), passphrase=settings.GPG_ROOT_KEY_PASSPHRASE)
-            # print(f'{result.__dict__=}')
+            # LOGGER.debug(f'{result.__dict__=}')
             if not result.ok:
                 raise DecryptionError(result.status)
             return result
