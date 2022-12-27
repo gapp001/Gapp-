@@ -21,6 +21,14 @@ class StellarRepository(Repository):
     """Repository class for Stellar logic"""
 
     @staticmethod
+    def get_network_passphrase() -> str:
+        """Returns Stellar network passphrase"""
+        if settings.SENTRY_ENV == settings.PROD_SENTRY_ENV:
+            return Network.PUBLIC_NETWORK_PASSPHRASE
+        return Network.TESTNET_NETWORK_PASSPHRASE
+
+
+    @staticmethod
     def check_trustline_exists(account_wallets: List[Dict[str, Any]]) -> bool:
         """Method for checking if an account has a trustline"""
         has_ga_ngn_trustline: bool = False
@@ -95,7 +103,8 @@ class StellarRepository(Repository):
                                recipient_public_key: str,
                                issuer_keypair: Keypair,
                                issuer_account: Account,
-                               base_fee: int) -> bool:
+                               base_fee: int,
+                               network_passphrase: str, ) -> bool:
         """
             Method for creating Stellar Account
             The trustline must be created in the mobile application
@@ -103,7 +112,7 @@ class StellarRepository(Repository):
         stellar_transaction = (
             TransactionBuilder(
                 source_account=issuer_account,
-                network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+                network_passphrase=network_passphrase,
                 base_fee=base_fee,
             )
             .append_create_account_op(
@@ -120,6 +129,8 @@ class StellarRepository(Repository):
                 stellar_transaction)
             return response.get('successful')
         except (NotFoundError, BadRequestError, BadResponseError, UnknownRequestError, ConnectionError) as e:
+            print(f'{e=}')
+            print(f'{e.__dict__=}')
             set_context('create_stellar_account_case', value=e.__dict__)
             capture_message(
                 'Error in StellarRepository.create_stellar_account', level='error')
@@ -133,6 +144,7 @@ class StellarRepository(Repository):
                          issuer_account: Account,
                          base_fee: int,
                          asset: Asset,
+                         network_passphrase: str, 
                          ga_transaction_id: int | None = None, ) -> StellarPaymentTransactionSchema:
         '''
         Send asset from issuing accout to receiving account.
@@ -148,18 +160,18 @@ class StellarRepository(Repository):
         # )
 
         # Build transaction around payment operation (sending asset to distributor).
-        # Change network_passphrase to Network.PUBLIC_NETWORK_PASSPHRASE in production.
         stellar_transaction = (
             TransactionBuilder(
                 source_account=issuer_account,
-                network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+                network_passphrase=network_passphrase,
                 base_fee=base_fee,
             )
             .append_payment_op(
                 destination=recipient_public_key,
                 asset=asset,
-                amount=amount
+                amount=amount,
             )
+            .add_text_memo(str(ga_transaction_id))
             .set_timeout(settings.DEFAULT_TIMEOUT)
             .build()
         )
@@ -243,6 +255,7 @@ class StellarRepository(Repository):
                                base_fee: int,
                                ga_ngn_asset: Asset,
                                ga_usd_asset: Asset,
+                               network_passphrase: str, 
                                ) -> None:
         '''
         Create a trustline between receiving account and issuing account for asset.
@@ -261,7 +274,7 @@ class StellarRepository(Repository):
         stellar_transaction = (
             TransactionBuilder(
                 source_account=recipient_account,
-                network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+                network_passphrase=network_passphrase,
                 base_fee=base_fee,
             )
             .append_change_trust_op(asset=ga_ngn_asset)
