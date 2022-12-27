@@ -172,7 +172,8 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
                                 amount=ga_ngn_transaction_amount, recipient_public_key=account.public_key,
                                 server=server, issuer_keypair=issuer_keypair,
                                 issuer_account=issuer_account, base_fee=base_fee,
-                                asset=ga_ngn_asset
+                                asset=ga_ngn_asset,
+                                network_passphrase=StellarRepository.get_network_passphrase(),
                             )
 
                             is_ga_ngn_transaction_succeed: bool = StellarRepository.check_transaction_result(result_xdr=ga_ngn_transaction_result.result_xdr)
@@ -201,7 +202,8 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
                                 amount=ga_usd_transaction_amount, recipient_public_key=account.public_key,
                                 server=server, issuer_keypair=issuer_keypair,
                                 issuer_account=issuer_account, base_fee=base_fee,
-                                asset=ga_usd_asset
+                                asset=ga_usd_asset,
+                                network_passphrase=StellarRepository.get_network_passphrase(),
                             )
 
                             is_ga_usd_transaction_succeed: bool = StellarRepository.check_transaction_result(result_xdr=transaction_result.result_xdr)
@@ -330,6 +332,7 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
                                 issuer_keypair=issuer_keypair,
                                 issuer_account=issuer_account,
                                 base_fee=base_fee,
+                                network_passphrase=StellarRepository.get_network_passphrase()
                             )
                         else:
                             is_created_account = True
@@ -344,6 +347,7 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
                                 base_fee=base_fee,
                                 ga_ngn_asset=ga_ngn_asset,
                                 ga_usd_asset=ga_usd_asset,
+                                network_passphrase=StellarRepository.get_network_passphrase(),
                             )
 
                             if has_created_trustline:
@@ -546,7 +550,8 @@ def send_transactions_to_stellar_task(conn=None):
                                 issuer_keypair=issuer_keypair,
                                 issuer_account=issuer_account,
                                 base_fee=base_fee,
-                                asset=asset
+                                asset=asset,
+                                network_passphrase=StellarRepository.get_network_passphrase(),
                             )
                         except Exception as e:
                             # here not catched exception to Sentry because it's catched in StellarRepository.send_transaction
