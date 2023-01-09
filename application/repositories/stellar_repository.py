@@ -2,7 +2,7 @@ from decimal import Decimal
 import requests
 from typing import Any, Dict, List, Optional
 from stellar_sdk import (Account, Asset, Keypair, Network, Server,
-                         TransactionBuilder)
+                         TransactionBuilder, TextMemo)
 from stellar_sdk.exceptions import (NotFoundError, BadRequestError, BadResponseError, UnknownRequestError, ConnectionError, SignatureExistError)
 from stellar_sdk.xdr.transaction_result import TransactionResult
 from stellar_sdk.xdr.payment_result_code import PaymentResultCode
@@ -19,6 +19,9 @@ from .repository import Repository
 
 class StellarRepository(Repository):
     """Repository class for Stellar logic"""
+
+    FORCED_PAYMENT_MEMO = TextMemo(text='forced_payment')
+
 
     @staticmethod
     def get_network_passphrase() -> str:
@@ -125,8 +128,7 @@ class StellarRepository(Repository):
 
         stellar_transaction.sign(issuer_keypair)
         try:
-            response: Dict[str, Any] = server.submit_transaction(
-                stellar_transaction)
+            response: Dict[str, Any] = server.submit_transaction(stellar_transaction)
             return response.get('successful')
         except (NotFoundError, BadRequestError, BadResponseError, UnknownRequestError, ConnectionError) as e:
             print(f'{e=}')
@@ -146,20 +148,90 @@ class StellarRepository(Repository):
                          asset: Asset,
                          network_passphrase: str, 
                          ga_transaction_id: int | None = None, ) -> StellarPaymentTransactionSchema:
-        '''
-        Send asset from issuing accout to receiving account.
-        Основная функция, которая создает, подписывает и отправляет транзакцию в сеть Stellar.
-        '''
-        # receiving_keypair = cls.create_stellar_account(
-        #     receiving_public_key=transaction.related_user.stellar_public_key,
-        #     server=server,
-        #     issuing_keypair=issuing_keypair,
-        #     issuer=issuer,
-        #     base_fee=base_fee,
-        #     asset=asset
-        # )
+        """Send asset from issuing accout to receiving account"""
 
-        # Build transaction around payment operation (sending asset to distributor).
+        try:
+            stellar_response: Dict[str, Any] = __class__.process_payment_operation(
+                server=server,
+                amount=amount,
+                recipient_public_key=recipient_public_key,
+                issuer_keypair=issuer_keypair,
+                issuer_account=issuer_account,
+                base_fee=base_fee,
+                asset=asset,
+                network_passphrase=network_passphrase,
+                memo=TextMemo(text=str(ga_transaction_id)),
+            )
+
+            response = StellarPaymentTransactionSchema(ga_transaction_id=ga_transaction_id, **stellar_response)
+            return response
+
+        except (NotFoundError, BadRequestError, BadResponseError,
+                UnknownRequestError, ConnectionError, SignatureExistError,
+                AttributeError, ValueError) as e:
+            set_context('send_transaction_case', value=e.__dict__)
+            capture_message(
+                'Error in StellarRepository.send_transaction', level='error')
+            raise e
+
+
+    @staticmethod
+    def process_payment_operation(server: Server,
+                                  amount: str | Decimal,
+                                  recipient_public_key: str,
+                                  issuer_keypair: Keypair,
+                                  issuer_account: Account,
+                                  base_fee: int,
+                                  asset: Asset,
+                                  network_passphrase: str,
+                                  memo: TextMemo, ) -> Dict[str, Any]:
+        """
+            Method for processing payment operation to Stellar Network
+            @Args:
+                server: stellar_sdk.Server,
+                amount: str | Decimal,
+                recipient_public_key: str,
+                issuer_keypair: stellar_sdk.Keypair,
+                issuer_account: stellar_sdk.Account,
+                base_fee: int,
+                asset: stellar_sdk.Asset,
+                network_passphrase: str,
+                memo: stellar_sdk.TextMemo, 
+
+            @Raised:
+                NotFoundError,
+                BadRequestError,
+                BadResponseError,
+                UnknownRequestError,
+                ConnectionError,
+                SignatureExistError,
+                AttributeError,
+                ValueError
+            
+            @Returns: Dict[str, Any] like a format  
+                {
+                    'id': '58244dbebf462bc74caaa6c50b670d36463ae8e3b9ce812003b1553bb1559951',
+                    'paging_token': '1417493826514944',
+                    'successful': True,
+                    'hash': '58244dbebf462bc74caaa6c50b670d36463ae8e3b9ce812003b1553bb1559951',
+                    'ledger': 330036,
+                    'created_at': datetime.datetime(2022, 10, 4, 11, 15, 56, tzinfo = datetime.timezone.utc),
+                    'source_account': 'GD4TTQKE3DCGFZ7LEYUFPUEYXLIEUNGPI3JXI7GENPLF2WGF762MGX3L',
+                    'source_account_sequence': '1337104923623429',
+                    'fee_account': 'GD4TTQKE3DCGFZ7LEYUFPUEYXLIEUNGPI3JXI7GENPLF2WGF762MGX3L',
+                    'fee_charged': '100',
+                    'max_fee': '100',
+                    'operation_count': 1,
+                    'envelope_xdr': 'AAAAAgAAAAD5OcFE2MRi5+smKFfQmLrQSjTPRtN0fMRr1l1Yxf+0wwAAAGQABMAXAAAABQAAAAEAAAAAAAAAAAAAAABlHUliAAAAAAAAAAEAAAAAAAAAAQAAAACAWfFTn0Rv6J34JmwuBaju0JsNU2X74R/eXycszjJQDgAAAAJnYU5HTgAAAAAAAAAAAAAA+TnBRNjEYufrJihX0Ji60Eo0z0bTdHzEa9ZdWMX/tMMAAAABKgXyAAAAAAAAAAABxf+0wwAAAEBFGiPT+uoWqjyxSp1QW6+rwcHBXBKJicxUopCABFPmAvafbVxF5wQ7KTukBz57Sf6Z68YyGI8r5ZV+IPZgs6MI',
+                    'result_xdr': 'AAAAAAAAAGQAAAAAAAAAAQAAAAAAAAABAAAAAAAAAAA=',
+                    'result_meta_xdr': 'AAAAAgAAAAIAAAADAAUJNAAAAAAAAAAA+TnBRNjEYufrJihX0Ji60Eo0z0bTdHzEa9ZdWMX/tMMAAAAXP/iFbAAEwBcAAAAEAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAwAAAAAABQkYAAAAAGM8FVkAAAAAAAAAAQAFCTQAAAAAAAAAAPk5wUTYxGLn6yYoV9CYutBKNM9G03R8xGvWXVjF/7TDAAAAFz/4hWwABMAXAAAABQAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAMAAAAAAAUJNAAAAABjPBXsAAAAAAAAAAEAAAACAAAAAwAFCTIAAAABAAAAAIBZ8VOfRG/onfgmbC4FqO7Qmw1TZfvhH95fJyzOMlAOAAAAAmdhTkdOAAAAAAAAAAAAAAD5OcFE2MRi5+smKFfQmLrQSjTPRtN0fMRr1l1Yxf+0wwAAAAAAAAAAf/////////8AAAABAAAAAAAAAAAAAAABAAUJNAAAAAEAAAAAgFnxU59Eb+id+CZsLgWo7tCbDVNl++Ef3l8nLM4yUA4AAAACZ2FOR04AAAAAAAAAAAAAAPk5wUTYxGLn6yYoV9CYutBKNM9G03R8xGvWXVjF/7TDAAAAASoF8gB//////////wAAAAEAAAAAAAAAAAAAAAA=',
+                    'fee_meta_xdr': 'AAAAAgAAAAMABQkYAAAAAAAAAAD5OcFE2MRi5+smKFfQmLrQSjTPRtN0fMRr1l1Yxf+0wwAAABc/+IXQAATAFwAAAAQAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAADAAAAAAAFCRgAAAAAYzwVWQAAAAAAAAABAAUJNAAAAAAAAAAA+TnBRNjEYufrJihX0Ji60Eo0z0bTdHzEa9ZdWMX/tMMAAAAXP/iFbAAEwBcAAAAEAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAwAAAAAABQkYAAAAAGM8FVkAAAAA',
+                    'memo_type': 'none',
+                    'signatures': ['RRoj0/rqFqo8sUqdUFuvq8HBwVwSiYnMVKKQgART5gL2n21cRecEOyk7pAc+e0n+mevGMhiPK+WVfiD2YLOjCA=='],
+                    'valid_after': datetime.datetime(1970, 1, 1, 0, 0, tzinfo = datetime.timezone.utc),
+                    'valid_before': datetime.datetime(2023, 10, 4, 11, 15, 46, tzinfo = datetime.timezone.utc)
+                }
+        """
         stellar_transaction = (
             TransactionBuilder(
                 source_account=issuer_account,
@@ -171,7 +243,7 @@ class StellarRepository(Repository):
                 asset=asset,
                 amount=amount,
             )
-            .add_text_memo(str(ga_transaction_id))
+            .add_memo(memo=memo)
             .set_timeout(settings.DEFAULT_TIMEOUT)
             .build()
         )
@@ -180,10 +252,9 @@ class StellarRepository(Repository):
             # Sign this transaction with the issuer secret key
             stellar_transaction.sign(issuer_keypair)
             # Submit the transaction to the Horizon server.
-            response = StellarPaymentTransactionSchema(ga_transaction_id=ga_transaction_id,
-                                                       **server.submit_transaction(stellar_transaction))
+            response: Dict[str, Any] = server.submit_transaction(stellar_transaction)
             return response
-
+    
         except (NotFoundError, BadRequestError, BadResponseError,
                 UnknownRequestError, ConnectionError, SignatureExistError,
                 AttributeError, ValueError) as e:
@@ -191,6 +262,8 @@ class StellarRepository(Repository):
             capture_message(
                 'Error in StellarRepository.send_transaction', level='error')
             raise e
+
+
 
     # @staticmethod
     # def send_transaction(transaction: GATransactionSchema,

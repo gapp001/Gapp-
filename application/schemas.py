@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import List
@@ -127,3 +128,7 @@ class GAStellarAccountBoundedSchema(BaseModel):
     is_initial_accrued_money: bool | None = None
 
 
+@dataclass(frozen=True)
+class ResultDTO:
+    is_success: bool
+    detail: str | None = None
