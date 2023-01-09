@@ -472,8 +472,9 @@ def send_updated_stellar_accounts_to_django_task(conn=None):
     max_retries=53,
     default_retry_delay=60)
 # @task_blocker(task_key='configure_credentials_from_django')
-def configure_credentials_from_django_task(conn: Redis):
+def configure_credentials_from_django_task(conn: Redis | None = None):
     timeout = 8.0
+    conn = conn or RDB.get_redis_pool()
     try:
         with requests.Session() as session:
             access_token = conn.get('access_token')
