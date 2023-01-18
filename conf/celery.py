@@ -168,6 +168,11 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
                         ga_ngn_transaction_amount: Decimal = account.ngn_balance - ga_ngn_stellar_wallet.balance
 
                         try:
+                            exception_data: Dict[str, Any] | None = None
+                            issuer_account: Account | None = StellarRepository.get_account(
+                                server=server,
+                                public_key=issuer_keypair.public_key,
+                            )
                             ga_ngn_transaction_result: StellarPaymentTransactionSchema = StellarRepository.send_transaction(
                                 amount=ga_ngn_transaction_amount, recipient_public_key=account.public_key,
                                 server=server, issuer_keypair=issuer_keypair,
@@ -182,9 +187,11 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
                                 UnknownRequestError, ConnectionError, SignatureExistError,
                                 AttributeError, ValueError) as e:
                             is_ga_ngn_transaction_succeed: bool = False
+                            exception_data: Dict[str, Any] = e.__dict__
 
                         if not is_ga_ngn_transaction_succeed:
-                            set_context('initial_accrual_stellar_accounts_task_case', value=transaction_result.dict())
+                            
+                            set_context('initial_accrual_stellar_accounts_task_case', value=exception_data)
                             capture_message('Stellar transaction not completed (initial_accrual_stellar_accounts_task_case)', level='error')
                             # continue
 
@@ -198,6 +205,11 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
                         ga_usd_transaction_amount: Decimal = account.usd_balance - ga_usd_stellar_wallet.balance
 
                         try:
+                            exception_data: Dict[str, Any] | None = None
+                            issuer_account: Account | None = StellarRepository.get_account(
+                                server=server,
+                                public_key=issuer_keypair.public_key,
+                            )
                             transaction_result: StellarPaymentTransactionSchema = StellarRepository.send_transaction(
                                 amount=ga_usd_transaction_amount, recipient_public_key=account.public_key,
                                 server=server, issuer_keypair=issuer_keypair,
@@ -212,9 +224,10 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
                                 UnknownRequestError, ConnectionError, SignatureExistError,
                                 AttributeError, ValueError) as e:
                                 is_ga_usd_transaction_succeed: bool = False
+                                exception_data: Dict[str, Any] = e.__dict__
 
                         if not is_ga_usd_transaction_succeed:
-                            set_context('initial_accrual_stellar_accounts_task_case', value=transaction_result.dict())
+                            set_context('initial_accrual_stellar_accounts_task_case', value=exception_data)
                             capture_message('Stellar transaction not completed (initial_accrual_stellar_accounts_task_case)', level='error')
                             # continue
 
