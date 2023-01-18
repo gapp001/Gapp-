@@ -326,6 +326,10 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
                             decrypted_private_key: str = decrypted_private_key.decode()
 
                         if not can_skip_create_operation:
+                            issuer_account: Account | None = StellarRepository.get_account(
+                                server=server,
+                                public_key=issuer_keypair.public_key,
+                            )
                             is_created_account: bool = StellarRepository.create_stellar_account(
                                 server=server,
                                 recipient_public_key=account.public_key,
@@ -543,6 +547,7 @@ def send_transactions_to_stellar_task(conn=None):
                             issuer_public_key=issuer_keypair.public_key, currency=ga_transaction.amount_currency)
                         recipient_public_key: str = ga_transaction.related_user.stellar_account.public_key
                         try:
+                            issuer_account = server.load_account(issuer_keypair.public_key)
                             transaction_result: StellarPaymentTransactionSchema = StellarRepository.send_transaction(
                                 ga_transaction_id=ga_transaction.id,
                                 amount=ga_transaction.amount,
