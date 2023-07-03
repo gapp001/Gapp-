@@ -4,10 +4,15 @@ from typing import Any, Dict, List, Optional
 from stellar_sdk import (Account, Asset, Keypair, Network, Server,
                          TransactionBuilder, TextMemo)
 from stellar_sdk.exceptions import (NotFoundError, BadRequestError, BadResponseError, UnknownRequestError, ConnectionError, SignatureExistError)
+from stellar_sdk.xdr.inner_transaction_result import InnerTransactionResult
+from stellar_sdk.xdr.inner_transaction_result_pair import InnerTransactionResultPair
+from stellar_sdk.xdr.inner_transaction_result_result import InnerTransactionResultResult
+from stellar_sdk.xdr.operation_result import OperationResult
 from stellar_sdk.xdr.transaction_result import TransactionResult
 from stellar_sdk.xdr.payment_result_code import PaymentResultCode
 from stellar_sdk.decorated_signature import DecoratedSignature
 from sentry_sdk import set_context, capture_message
+from stellar_sdk.xdr.transaction_result_result import TransactionResultResult
 
 
 from application.schemas import (GATransactionSchema, StellarPaymentTransactionSchema, StellarWallet, TransactionResultSchema)
@@ -371,9 +376,27 @@ class StellarRepository(Repository):
     def check_transaction_result(result_xdr: str) -> bool:
         """Method for checking result of stellar transaction"""
         try:
-            transaction_result = TransactionResult.from_xdr(result_xdr)
-            transaction = transaction_result.result.results[0]
-            return transaction.tr.payment_result.code == PaymentResultCode.PAYMENT_SUCCESS
+
+            transaction_result: TransactionResult = TransactionResult.from_xdr(result_xdr)
+            result: TransactionResultResult = transaction_result.result
+            transaction: Optional[OperationResult] = None
+
+            if result.results:
+                transaction = result.results[0]
+            if not result.results and result.inner_result_pair:
+                inner_result_pair: InnerTransactionResultPair = result.inner_result_pair
+                inner_result: InnerTransactionResult = inner_result_pair.result
+                inner_result_result: InnerTransactionResultResult = inner_result.result
+                transaction = inner_result_result.results[0]
+
+            if not transaction:
+                print('Not valid processing transaction result')
+                return False
+
+            return (
+                transaction.tr.payment_result.code
+                == PaymentResultCode.PAYMENT_SUCCESS
+            )
         except Exception as e:
             set_context('check_transaction_result_case', value=e.__dict__)
             capture_message('Error in StellarRepository.check_transaction_result', level='error')
