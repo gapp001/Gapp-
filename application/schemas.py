@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import List
 from enum import Enum
+from typing import List, Optional
+
 from pydantic import BaseModel
 
 
@@ -102,13 +103,9 @@ class TransactionResultSchema(BaseModel):
     stellar_transaction_detail: str | None
 
 
-class GAStellarAccountBoundedSchema(BaseModel):
-    pk: int
-    status: str
-    private_key: str | None
-
 class StellarWallet(BaseModel):
     """Pydantic model for stellar_account.raw_data.get('balances'), where stellar_account is a stellar_sdk.account.Account object"""
+
     balance: Decimal
     buying_liabilities: str
     selling_liabilities: str

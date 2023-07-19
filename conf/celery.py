@@ -11,7 +11,7 @@ from application.credentials import (get_credentials_from_redis,
                                      set_credentials_into_redis)
 from application.repositories.django_repository import DjangoRepository, DjangoURLS
 from application.repositories.stellar_repository import StellarRepository
-from application.schemas import DjangoAuthCredentials, GAStellarAccountBoundedSchema, GAStellarAccountSchema, StellarPaymentTransactionSchema, StellarWallet
+from application.schemas import DjangoAuthCredentials, GAStellarAccountBoundedSchema, GAStellarAccountSchema, GATransactionSchema, StellarPaymentTransactionSchema, StellarWallet
 from redis import Redis
 from conf.exceptions import NoIssuerAccountFound
 from conf.redis import RDB, celery_blocker, task_blocker
@@ -37,27 +37,32 @@ def setup_periodic_tasks(sender, **kwargs):
     sender.add_periodic_task(
         10.0,
         get_stellar_accounts_from_django_task.s(),
-        name=f'Retrieving StellarAccount objects every 3 seconds'
+        name='Retrieving StellarAccount objects every 3 seconds'
     )
     sender.add_periodic_task(
         5.0,
         send_updated_stellar_accounts_to_django_task.s(),
-        name=f'Sending `GAStellarAccountBoundedSchema` data to Django-server every 5 seconds'
+        name='Sending `GAStellarAccountBoundedSchema` data to Django-server every 5 seconds'
     )
     sender.add_periodic_task(
         15.0,
         initial_accrual_stellar_accounts_task.s(),
-        name=f'Accrual of the starting balance to the user every 5 seconds'
+        name='Accrual of the starting balance to the user every 5 seconds'
     )
     sender.add_periodic_task(
         8.0,
         send_transactions_to_stellar_task.s(),
-        name=f'Send data to Stellar every 3 seconds'
+        name='Send data to Stellar every 3 seconds'
     )
     sender.add_periodic_task(
         3.0,
         send_transaction_result_to_django_task.s(),
-        name=f'Send Stellar transaction data to Django every 3 seconds'
+        name='Send Stellar transaction data to Django every 3 seconds'
+    )
+    sender.add_periodic_task(
+        60.0,
+        update_fake_root_account_task.s(),
+        name='Update fake root account every 60 seconds'
     )
 
 
@@ -109,7 +114,6 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
                 )
                 base_fee: int = server.fetch_base_fee()
 
-                
                 for account in stellar_accounts:
                     if account.ngn_balance == None or account.usd_balance == None:
                         not_founded_balance: str = 'ngn_balance' if not account.ngn_balance else 'usd_balance'
@@ -139,7 +143,7 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
                     ga_usd_stellar_wallet: StellarWallet = balances.get(settings.GA_USD_ASSET_CODE)
 
                     if not ga_ngn_stellar_wallet:
-                        set_context('initial_accrual_stellar_accounts_task_case',value=dict(public_key=account.public_key, ))
+                        set_context('initial_accrual_stellar_accounts_task_case', value=dict(public_key=account.public_key, ))
                         capture_message('GA_NGN Stellar wallet not found (initial_accrual_stellar_accounts_task_case)', level='error')
                         continue
 
@@ -272,8 +276,8 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
                 timeout=timeout,
                 access_token=credentials.access_token
             )
-            LOGGER.debug(f'\nget_stellar_accounts_from_django_task')
-            LOGGER.debug(f'{stellar_accounts=}')
+            # LOGGER.debug(f'\nget_stellar_accounts_from_django_task')
+            # LOGGER.debug(f'{stellar_accounts=}')
             if stellar_accounts:
                 server: Server = Server(settings.HORIZON_URL)
                 issuer_keypair = Keypair.from_secret(
@@ -306,9 +310,11 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
                             public_key=account.public_key)
                         if existing_account:
                             account_wallets: List[Dict[str, Any]] = existing_account.raw_data.get(
-                                'balances')
+                                'balances'
+                            )
                             has_trustline: bool = StellarRepository.check_trustline_exists(
-                                account_wallets)
+                                account_wallets
+                            )
                             # Setting up GAStellarAccountBoundedSchema data to Redis
                             if has_trustline:
                                 RDB.set_bounded_stellar_account(
@@ -596,7 +602,7 @@ def send_transactions_to_stellar_task(conn=None):
 @app.task(name='send_transaction_result_to_django_task')
 @task_blocker(task_key='send_transaction_result_to_django_task', key_ttl=300)
 def send_transaction_result_to_django_task(conn=None):
-    LOGGER.debug('send_transaction_result_to_django_task')
+    LOGGER.info('send_transaction_result_to_django_task')
     try:
         conn = conn or RDB.get_redis_pool()
         timeout = 8.0
@@ -615,9 +621,15 @@ def send_transaction_result_to_django_task(conn=None):
                 )
                 response.raise_for_status()
                 conn.hdel('transactions', *transactions.keys())
-                LOGGER.debug('DONE send_transaction_result_to_django_task')
+                LOGGER.info('DONE send_transaction_result_to_django_task')
                 return response.status_code == 200
     except Exception as e:
         set_context('send_transaction_result_to_django_task', value=e.__dict__)
         capture_message('Error in send_transaction_result_to_django_task', level='error')
         raise e
+
+
+@app.task(name='update_fake_root_account_task')
+def update_fake_root_account_task() -> None:
+    """The task for update fake user stellar account"""
+    StellarRepository.update_fake_root_account()

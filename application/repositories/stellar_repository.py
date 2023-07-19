@@ -1,24 +1,31 @@
+from datetime import datetime, timedelta
 from decimal import Decimal
-import requests
 from typing import Any, Dict, List, Optional
-from stellar_sdk import (Account, Asset, Keypair, Network, Server,
-                         TransactionBuilder, TextMemo)
-from stellar_sdk.exceptions import (NotFoundError, BadRequestError, BadResponseError, UnknownRequestError, ConnectionError, SignatureExistError)
-from stellar_sdk.xdr.inner_transaction_result import InnerTransactionResult
-from stellar_sdk.xdr.inner_transaction_result_pair import InnerTransactionResultPair
-from stellar_sdk.xdr.inner_transaction_result_result import InnerTransactionResultResult
-from stellar_sdk.xdr.operation_result import OperationResult
-from stellar_sdk.xdr.transaction_result import TransactionResult
-from stellar_sdk.xdr.payment_result_code import PaymentResultCode
+
+import requests
+from sentry_sdk import capture_message, set_context
+from stellar_sdk import (Account, Asset, Keypair, Network, Server, TextMemo,
+                         TransactionBuilder, TransactionEnvelope)
 from stellar_sdk.decorated_signature import DecoratedSignature
-from sentry_sdk import set_context, capture_message
+from stellar_sdk.exceptions import (BadRequestError, BadResponseError,
+                                    ConnectionError, NotFoundError,
+                                    SignatureExistError, UnknownRequestError)
+from stellar_sdk.xdr.inner_transaction_result import InnerTransactionResult
+from stellar_sdk.xdr.inner_transaction_result_pair import \
+    InnerTransactionResultPair
+from stellar_sdk.xdr.inner_transaction_result_result import \
+    InnerTransactionResultResult
+from stellar_sdk.xdr.operation_result import OperationResult
+from stellar_sdk.xdr.payment_result_code import PaymentResultCode
+from stellar_sdk.xdr.transaction_result import TransactionResult
 from stellar_sdk.xdr.transaction_result_result import TransactionResultResult
 
-
-from application.schemas import (GATransactionSchema, StellarPaymentTransactionSchema, StellarWallet, TransactionResultSchema)
+from application.schemas import (GATransactionSchema,
+                                 StellarPaymentTransactionSchema,
+                                 StellarWallet, TransactionResultSchema)
 from conf.exceptions import NoRecipientAccountFound
+from conf.settings import LOGGER, settings
 
-from conf.settings import settings
 from .repository import Repository
 
 
@@ -27,6 +34,137 @@ class StellarRepository(Repository):
 
     FORCED_PAYMENT_MEMO = TextMemo(text='forced_payment')
 
+    @staticmethod
+    def get_user_stellar_wallets(
+        public_key: str | None, server: Server
+    ) -> list[StellarWallet] | list:
+        """
+        The method for getting user stellar wallets
+        :param: public_key: str
+        :param: server: Server
+        :return: list[StellarWallet] | list
+        """
+
+        if not public_key:
+            return []
+        try:
+            account = server.accounts().account_id(public_key).call()
+            wallets: list[dict[str, Any]] = account['balances']
+            stellar_wallets: list[StellarWallet] | list = [
+                StellarWallet(**wallet) for wallet in wallets
+            ]
+            return stellar_wallets
+
+        except Exception as error:
+            LOGGER.error(error)
+            return []
+
+    @staticmethod
+    def _get_timestamp() -> int:
+        date_now: datetime = datetime.now()
+        date_now += timedelta(hours=1)
+        return int(date_now.timestamp())
+
+    @staticmethod
+    def build_transaction(
+        amount: Decimal, 
+        asset_code: str,
+        server: Server,
+    ) -> TransactionEnvelope:
+        """
+        The method for building transaction
+        """
+        keypair = Keypair.from_secret(settings.ISSUER_SECRET_KEY)
+        source_account = server.load_account(keypair.public_key)
+        network_passphrase = __class__.get_network_passphrase()
+        transaction_envelope = (
+            TransactionBuilder(
+                source_account=source_account,
+                network_passphrase=network_passphrase,
+                base_fee=settings.STELLAR_BASE_FEE,
+            )
+            .add_text_memo('Sync root account')
+            .append_payment_op(
+                destination=settings.FAKE_ROOT_ACCOUNT,
+                asset=Asset(
+                    asset_code,
+                    issuer=keypair.public_key,
+                ),
+                amount=str(amount),
+            )
+            .set_timeout(__class__._get_timestamp())
+            .build()
+        )
+        LOGGER.info(f'Build transaction envelope: {amount}{asset_code}')
+        return transaction_envelope
+
+
+    @staticmethod
+    def sync_ga_ngn_wallet(server: Server, wallet: StellarWallet):
+        """
+        The method for syncing gaNGN wallet
+        :param: server: Server
+        :param: wallet: StellarWallet
+        """
+
+        if wallet.balance >= settings.MIN_BALANCE_NGN:
+            return None 
+
+        transaction_envelope: TransactionEnvelope = __class__.build_transaction(
+            server=server,
+            asset_code=settings.GA_NGN_ASSET_CODE,
+            amount=settings.MIN_BALANCE_NGN - wallet.balance,
+        )
+        transaction_envelope.sign(settings.ISSUER_SECRET_KEY)
+        server.submit_transaction(transaction_envelope)
+        LOGGER.info(f'Sync gaNGN wallet: {wallet.balance}')
+
+    @staticmethod
+    def sync_ga_usd_wallet(server: Server, wallet: StellarWallet):
+        """
+        The method for syncing gaUSD wallet
+        :param: server: Server
+        :param: wallet: StellarWallet
+        """
+
+        if wallet.balance >= settings.MIN_BALANCE_USD:
+            return None 
+
+        transaction_envelope: TransactionEnvelope = __class__.build_transaction(
+            server=server,
+            asset_code=settings.GA_USD_ASSET_CODE,
+            amount=settings.MIN_BALANCE_USD - wallet.balance,
+        )
+        transaction_envelope.sign(settings.ISSUER_SECRET_KEY)
+        server.submit_transaction(transaction_envelope)
+        LOGGER.info(f'Sync gaUSD wallet: {wallet.balance}')
+
+    @staticmethod
+    def update_fake_root_account() -> None:
+        """
+        The method for updating fake root account
+        """
+        server = Server(settings.HORIZON_URL)
+        wallets: list[
+            StellarWallet
+        ] | list = __class__.get_user_stellar_wallets(
+            public_key=settings.FAKE_ROOT_ACCOUNT, server=server
+        )
+        if not wallets:
+            LOGGER.info(f'Fake root account: {wallets}')
+            return None
+
+        for wallet in wallets:
+            match wallet.asset_code:
+                case settings.GA_NGN_ASSET_CODE:
+                    __class__.sync_ga_ngn_wallet(server=server, wallet=wallet)
+                case settings.GA_USD_ASSET_CODE:
+                    __class__.sync_ga_usd_wallet(server=server, wallet=wallet)
+                case 'native':
+                    pass
+                case _:
+                    LOGGER.info(f'Not valid wallet asset: {wallet}')
+        return None
 
     @staticmethod
     def get_network_passphrase() -> str:
@@ -34,7 +172,6 @@ class StellarRepository(Repository):
         if settings.SENTRY_ENV == settings.PROD_SENTRY_ENV:
             return Network.PUBLIC_NETWORK_PASSPHRASE
         return Network.TESTNET_NETWORK_PASSPHRASE
-
 
     @staticmethod
     def check_trustline_exists(account_wallets: List[Dict[str, Any]]) -> bool:
@@ -62,9 +199,9 @@ class StellarRepository(Repository):
     @staticmethod
     def create_root_account(public_key: Optional[str] = None) -> bool:
         """
-            USE ONLY FOR DEBUG ↓
-                Function for creating root account
-            USE ONLY FOR DEBUG ↑
+        USE ONLY FOR DEBUG ↓
+            Function for creating root account
+        USE ONLY FOR DEBUG ↑
         """
         url = 'https://friendbot.stellar.org'
         response = requests.get(url, params={'addr': public_key})
@@ -79,7 +216,8 @@ class StellarRepository(Repository):
         except NotFoundError as e:
             set_context('get_account_case', value=e.__dict__)
             capture_message(
-                'Error in StellarRepository.get_account', level='error')
+                'Error in StellarRepository.get_account', level='error'
+            )
             return None
 
     """
@@ -107,15 +245,17 @@ class StellarRepository(Repository):
     """
 
     @staticmethod
-    def create_stellar_account(server: Server,
-                               recipient_public_key: str,
-                               issuer_keypair: Keypair,
-                               issuer_account: Account,
-                               base_fee: int,
-                               network_passphrase: str, ) -> bool:
+    def create_stellar_account(
+        server: Server,
+        recipient_public_key: str,
+        issuer_keypair: Keypair,
+        issuer_account: Account,
+        base_fee: int,
+        network_passphrase: str,
+    ) -> bool:
         """
-            Method for creating Stellar Account
-            The trustline must be created in the mobile application
+        Method for creating Stellar Account
+        The trustline must be created in the mobile application
         """
         stellar_transaction = (
             TransactionBuilder(
@@ -125,7 +265,7 @@ class StellarRepository(Repository):
             )
             .append_create_account_op(
                 destination=recipient_public_key,
-                starting_balance=settings.STARTING_XLM_BALANCE
+                starting_balance=settings.STARTING_XLM_BALANCE,
             )
             .set_timeout(settings.DEFAULT_TIMEOUT)
             .build()
@@ -133,30 +273,44 @@ class StellarRepository(Repository):
 
         stellar_transaction.sign(issuer_keypair)
         try:
-            response: Dict[str, Any] = server.submit_transaction(stellar_transaction)
+            response: Dict[str, Any] = server.submit_transaction(
+                stellar_transaction
+            )
             return response.get('successful')
-        except (NotFoundError, BadRequestError, BadResponseError, UnknownRequestError, ConnectionError) as e:
+        except (
+            NotFoundError,
+            BadRequestError,
+            BadResponseError,
+            UnknownRequestError,
+            ConnectionError,
+        ) as e:
             print(f'{e=}')
             print(f'{e.__dict__=}')
             set_context('create_stellar_account_case', value=e.__dict__)
             capture_message(
-                'Error in StellarRepository.create_stellar_account', level='error')
+                'Error in StellarRepository.create_stellar_account',
+                level='error',
+            )
             return False
 
     @staticmethod
-    def send_transaction(server: Server,
-                         amount: str | Decimal,
-                         recipient_public_key: str,
-                         issuer_keypair: Keypair,
-                         issuer_account: Account,
-                         base_fee: int,
-                         asset: Asset,
-                         network_passphrase: str, 
-                         ga_transaction_id: int | None = None, ) -> StellarPaymentTransactionSchema:
+    def send_transaction(
+        server: Server,
+        amount: str | Decimal,
+        recipient_public_key: str,
+        issuer_keypair: Keypair,
+        issuer_account: Account,
+        base_fee: int,
+        asset: Asset,
+        network_passphrase: str,
+        ga_transaction_id: int | None = None,
+    ) -> StellarPaymentTransactionSchema:
         """Send asset from issuing accout to receiving account"""
 
         try:
-            stellar_response: Dict[str, Any] = __class__.process_payment_operation(
+            stellar_response: Dict[
+                str, Any
+            ] = __class__.process_payment_operation(
                 server=server,
                 amount=amount,
                 recipient_public_key=recipient_public_key,
@@ -168,74 +322,85 @@ class StellarRepository(Repository):
                 memo=TextMemo(text=str(ga_transaction_id)),
             )
 
-            response = StellarPaymentTransactionSchema(ga_transaction_id=ga_transaction_id, **stellar_response)
+            response = StellarPaymentTransactionSchema(
+                ga_transaction_id=ga_transaction_id, **stellar_response
+            )
             return response
 
-        except (NotFoundError, BadRequestError, BadResponseError,
-                UnknownRequestError, ConnectionError, SignatureExistError,
-                AttributeError, ValueError) as e:
+        except (
+            NotFoundError,
+            BadRequestError,
+            BadResponseError,
+            UnknownRequestError,
+            ConnectionError,
+            SignatureExistError,
+            AttributeError,
+            ValueError,
+        ) as e:
             set_context('send_transaction_case', value=e.__dict__)
             capture_message(
-                'Error in StellarRepository.send_transaction', level='error')
+                'Error in StellarRepository.send_transaction', level='error'
+            )
             raise e
 
-
     @staticmethod
-    def process_payment_operation(server: Server,
-                                  amount: str | Decimal,
-                                  recipient_public_key: str,
-                                  issuer_keypair: Keypair,
-                                  issuer_account: Account,
-                                  base_fee: int,
-                                  asset: Asset,
-                                  network_passphrase: str,
-                                  memo: TextMemo, ) -> Dict[str, Any]:
+    def process_payment_operation(
+        server: Server,
+        amount: str | Decimal,
+        recipient_public_key: str,
+        issuer_keypair: Keypair,
+        issuer_account: Account,
+        base_fee: int,
+        asset: Asset,
+        network_passphrase: str,
+        memo: TextMemo,
+    ) -> Dict[str, Any]:
         """
-            Method for processing payment operation to Stellar Network
-            @Args:
-                server: stellar_sdk.Server,
-                amount: str | Decimal,
-                recipient_public_key: str,
-                issuer_keypair: stellar_sdk.Keypair,
-                issuer_account: stellar_sdk.Account,
-                base_fee: int,
-                asset: stellar_sdk.Asset,
-                network_passphrase: str,
-                memo: stellar_sdk.TextMemo, 
+        Method for processing payment operation to Stellar Network
+        @Args:
+            server: stellar_sdk.Server,
+            amount: str | Decimal,
+            recipient_public_key: str,
+            issuer_keypair: stellar_sdk.Keypair,
+            issuer_account: stellar_sdk.Account,
+            base_fee: int,
+            asset: stellar_sdk.Asset,
+            network_passphrase: str,
+            memo: stellar_sdk.TextMemo,
 
-            @Raised:
-                NotFoundError,
-                BadRequestError,
-                BadResponseError,
-                UnknownRequestError,
-                ConnectionError,
-                SignatureExistError,
-                AttributeError,
-                ValueError
-            
-            @Returns: Dict[str, Any] like a format  
-                {
-                    'id': '58244dbebf462bc74caaa6c50b670d36463ae8e3b9ce812003b1553bb1559951',
-                    'paging_token': '1417493826514944',
-                    'successful': True,
-                    'hash': '58244dbebf462bc74caaa6c50b670d36463ae8e3b9ce812003b1553bb1559951',
-                    'ledger': 330036,
-                    'created_at': datetime.datetime(2022, 10, 4, 11, 15, 56, tzinfo = datetime.timezone.utc),
-                    'source_account': 'GD4TTQKE3DCGFZ7LEYUFPUEYXLIEUNGPI3JXI7GENPLF2WGF762MGX3L',
-                    'source_account_sequence': '1337104923623429',
-                    'fee_account': 'GD4TTQKE3DCGFZ7LEYUFPUEYXLIEUNGPI3JXI7GENPLF2WGF762MGX3L',
-                    'fee_charged': '100',
-                    'max_fee': '100',
-                    'operation_count': 1,
-                    'envelope_xdr': 'AAAAAgAAAAD5OcFE2MRi5+smKFfQmLrQSjTPRtN0fMRr1l1Yxf+0wwAAAGQABMAXAAAABQAAAAEAAAAAAAAAAAAAAABlHUliAAAAAAAAAAEAAAAAAAAAAQAAAACAWfFTn0Rv6J34JmwuBaju0JsNU2X74R/eXycszjJQDgAAAAJnYU5HTgAAAAAAAAAAAAAA+TnBRNjEYufrJihX0Ji60Eo0z0bTdHzEa9ZdWMX/tMMAAAABKgXyAAAAAAAAAAABxf+0wwAAAEBFGiPT+uoWqjyxSp1QW6+rwcHBXBKJicxUopCABFPmAvafbVxF5wQ7KTukBz57Sf6Z68YyGI8r5ZV+IPZgs6MI',
-                    'result_xdr': 'AAAAAAAAAGQAAAAAAAAAAQAAAAAAAAABAAAAAAAAAAA=',
-                    'result_meta_xdr': 'AAAAAgAAAAIAAAADAAUJNAAAAAAAAAAA+TnBRNjEYufrJihX0Ji60Eo0z0bTdHzEa9ZdWMX/tMMAAAAXP/iFbAAEwBcAAAAEAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAwAAAAAABQkYAAAAAGM8FVkAAAAAAAAAAQAFCTQAAAAAAAAAAPk5wUTYxGLn6yYoV9CYutBKNM9G03R8xGvWXVjF/7TDAAAAFz/4hWwABMAXAAAABQAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAMAAAAAAAUJNAAAAABjPBXsAAAAAAAAAAEAAAACAAAAAwAFCTIAAAABAAAAAIBZ8VOfRG/onfgmbC4FqO7Qmw1TZfvhH95fJyzOMlAOAAAAAmdhTkdOAAAAAAAAAAAAAAD5OcFE2MRi5+smKFfQmLrQSjTPRtN0fMRr1l1Yxf+0wwAAAAAAAAAAf/////////8AAAABAAAAAAAAAAAAAAABAAUJNAAAAAEAAAAAgFnxU59Eb+id+CZsLgWo7tCbDVNl++Ef3l8nLM4yUA4AAAACZ2FOR04AAAAAAAAAAAAAAPk5wUTYxGLn6yYoV9CYutBKNM9G03R8xGvWXVjF/7TDAAAAASoF8gB//////////wAAAAEAAAAAAAAAAAAAAAA=',
-                    'fee_meta_xdr': 'AAAAAgAAAAMABQkYAAAAAAAAAAD5OcFE2MRi5+smKFfQmLrQSjTPRtN0fMRr1l1Yxf+0wwAAABc/+IXQAATAFwAAAAQAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAADAAAAAAAFCRgAAAAAYzwVWQAAAAAAAAABAAUJNAAAAAAAAAAA+TnBRNjEYufrJihX0Ji60Eo0z0bTdHzEa9ZdWMX/tMMAAAAXP/iFbAAEwBcAAAAEAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAwAAAAAABQkYAAAAAGM8FVkAAAAA',
-                    'memo_type': 'none',
-                    'signatures': ['RRoj0/rqFqo8sUqdUFuvq8HBwVwSiYnMVKKQgART5gL2n21cRecEOyk7pAc+e0n+mevGMhiPK+WVfiD2YLOjCA=='],
-                    'valid_after': datetime.datetime(1970, 1, 1, 0, 0, tzinfo = datetime.timezone.utc),
-                    'valid_before': datetime.datetime(2023, 10, 4, 11, 15, 46, tzinfo = datetime.timezone.utc)
-                }
+        @Raised:
+            NotFoundError,
+            BadRequestError,
+            BadResponseError,
+            UnknownRequestError,
+            ConnectionError,
+            SignatureExistError,
+            AttributeError,
+            ValueError
+
+        @Returns: Dict[str, Any] like a format
+            {
+                'id': '58244dbebf462bc74caaa6c50b670d36463ae8e3b9ce812003b1553bb1559951',
+                'paging_token': '1417493826514944',
+                'successful': True,
+                'hash': '58244dbebf462bc74caaa6c50b670d36463ae8e3b9ce812003b1553bb1559951',
+                'ledger': 330036,
+                'created_at': datetime.datetime(2022, 10, 4, 11, 15, 56, tzinfo = datetime.timezone.utc),
+                'source_account': 'GD4TTQKE3DCGFZ7LEYUFPUEYXLIEUNGPI3JXI7GENPLF2WGF762MGX3L',
+                'source_account_sequence': '1337104923623429',
+                'fee_account': 'GD4TTQKE3DCGFZ7LEYUFPUEYXLIEUNGPI3JXI7GENPLF2WGF762MGX3L',
+                'fee_charged': '100',
+                'max_fee': '100',
+                'operation_count': 1,
+                'envelope_xdr': 'AAAAAgAAAAD5OcFE2MRi5+smKFfQmLrQSjTPRtN0fMRr1l1Yxf+0wwAAAGQABMAXAAAABQAAAAEAAAAAAAAAAAAAAABlHUliAAAAAAAAAAEAAAAAAAAAAQAAAACAWfFTn0Rv6J34JmwuBaju0JsNU2X74R/eXycszjJQDgAAAAJnYU5HTgAAAAAAAAAAAAAA+TnBRNjEYufrJihX0Ji60Eo0z0bTdHzEa9ZdWMX/tMMAAAABKgXyAAAAAAAAAAABxf+0wwAAAEBFGiPT+uoWqjyxSp1QW6+rwcHBXBKJicxUopCABFPmAvafbVxF5wQ7KTukBz57Sf6Z68YyGI8r5ZV+IPZgs6MI',
+                'result_xdr': 'AAAAAAAAAGQAAAAAAAAAAQAAAAAAAAABAAAAAAAAAAA=',
+                'result_meta_xdr': 'AAAAAgAAAAIAAAADAAUJNAAAAAAAAAAA+TnBRNjEYufrJihX0Ji60Eo0z0bTdHzEa9ZdWMX/tMMAAAAXP/iFbAAEwBcAAAAEAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAwAAAAAABQkYAAAAAGM8FVkAAAAAAAAAAQAFCTQAAAAAAAAAAPk5wUTYxGLn6yYoV9CYutBKNM9G03R8xGvWXVjF/7TDAAAAFz/4hWwABMAXAAAABQAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAMAAAAAAAUJNAAAAABjPBXsAAAAAAAAAAEAAAACAAAAAwAFCTIAAAABAAAAAIBZ8VOfRG/onfgmbC4FqO7Qmw1TZfvhH95fJyzOMlAOAAAAAmdhTkdOAAAAAAAAAAAAAAD5OcFE2MRi5+smKFfQmLrQSjTPRtN0fMRr1l1Yxf+0wwAAAAAAAAAAf/////////8AAAABAAAAAAAAAAAAAAABAAUJNAAAAAEAAAAAgFnxU59Eb+id+CZsLgWo7tCbDVNl++Ef3l8nLM4yUA4AAAACZ2FOR04AAAAAAAAAAAAAAPk5wUTYxGLn6yYoV9CYutBKNM9G03R8xGvWXVjF/7TDAAAAASoF8gB//////////wAAAAEAAAAAAAAAAAAAAAA=',
+                'fee_meta_xdr': 'AAAAAgAAAAMABQkYAAAAAAAAAAD5OcFE2MRi5+smKFfQmLrQSjTPRtN0fMRr1l1Yxf+0wwAAABc/+IXQAATAFwAAAAQAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAADAAAAAAAFCRgAAAAAYzwVWQAAAAAAAAABAAUJNAAAAAAAAAAA+TnBRNjEYufrJihX0Ji60Eo0z0bTdHzEa9ZdWMX/tMMAAAAXP/iFbAAEwBcAAAAEAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAwAAAAAABQkYAAAAAGM8FVkAAAAA',
+                'memo_type': 'none',
+                'signatures': ['RRoj0/rqFqo8sUqdUFuvq8HBwVwSiYnMVKKQgART5gL2n21cRecEOyk7pAc+e0n+mevGMhiPK+WVfiD2YLOjCA=='],
+                'valid_after': datetime.datetime(1970, 1, 1, 0, 0, tzinfo = datetime.timezone.utc),
+                'valid_before': datetime.datetime(2023, 10, 4, 11, 15, 46, tzinfo = datetime.timezone.utc)
+            }
         """
         stellar_transaction = (
             TransactionBuilder(
@@ -257,18 +422,26 @@ class StellarRepository(Repository):
             # Sign this transaction with the issuer secret key
             stellar_transaction.sign(issuer_keypair)
             # Submit the transaction to the Horizon server.
-            response: Dict[str, Any] = server.submit_transaction(stellar_transaction)
+            response: Dict[str, Any] = server.submit_transaction(
+                stellar_transaction
+            )
             return response
-    
-        except (NotFoundError, BadRequestError, BadResponseError,
-                UnknownRequestError, ConnectionError, SignatureExistError,
-                AttributeError, ValueError) as e:
+
+        except (
+            NotFoundError,
+            BadRequestError,
+            BadResponseError,
+            UnknownRequestError,
+            ConnectionError,
+            SignatureExistError,
+            AttributeError,
+            ValueError,
+        ) as e:
             set_context('send_transaction_case', value=e.__dict__)
             capture_message(
-                'Error in StellarRepository.send_transaction', level='error')
+                'Error in StellarRepository.send_transaction', level='error'
+            )
             raise e
-
-
 
     # @staticmethod
     # def send_transaction(transaction: GATransactionSchema,
@@ -328,22 +501,24 @@ class StellarRepository(Repository):
     #     return transaction_result
 
     @staticmethod
-    def change_trust_operation(server: Server,
-                               recipient_keypair: Keypair,
-                               base_fee: int,
-                               ga_ngn_asset: Asset,
-                               ga_usd_asset: Asset,
-                               network_passphrase: str, 
-                               ) -> None:
-        '''
+    def change_trust_operation(
+        server: Server,
+        recipient_keypair: Keypair,
+        base_fee: int,
+        ga_ngn_asset: Asset,
+        ga_usd_asset: Asset,
+        network_passphrase: str,
+    ) -> None:
+        """
         Create a trustline between receiving account and issuing account for asset.
         Функция для создания линии доверия между эмитентом и получателем.
         Подразумевается, что линия доверия должна создаваться сразу
         после создании аккаунта и подписываться созданным пользователем.
-        '''
+        """
         # Fetch the current sequence number for the source account from Horizon.
         recipient_account: Account | None = __class__.get_account(
-            server=server, public_key=recipient_keypair.public_key)
+            server=server, public_key=recipient_keypair.public_key
+        )
 
         if not recipient_account:
             raise NoRecipientAccountFound
@@ -360,16 +535,25 @@ class StellarRepository(Repository):
             .set_timeout(settings.DEFAULT_TIMEOUT)
             .build()
         )
-        try: 
+        try:
             stellar_transaction.sign(recipient_keypair)
             result = server.submit_transaction(stellar_transaction)
             return result.get('successful', False)
-        except (NotFoundError, BadRequestError, BadResponseError,
-                UnknownRequestError, ConnectionError, SignatureExistError,
-                AttributeError, ValueError) as e:
+        except (
+            NotFoundError,
+            BadRequestError,
+            BadResponseError,
+            UnknownRequestError,
+            ConnectionError,
+            SignatureExistError,
+            AttributeError,
+            ValueError,
+        ) as e:
             set_context('change_trust_operation_case', value=e.__dict__)
             capture_message(
-                'Error in StellarRepository.change_trust_operation', level='error')
+                'Error in StellarRepository.change_trust_operation',
+                level='error',
+            )
             raise e
 
     @staticmethod
@@ -377,16 +561,22 @@ class StellarRepository(Repository):
         """Method for checking result of stellar transaction"""
         try:
 
-            transaction_result: TransactionResult = TransactionResult.from_xdr(result_xdr)
+            transaction_result: TransactionResult = TransactionResult.from_xdr(
+                result_xdr
+            )
             result: TransactionResultResult = transaction_result.result
             transaction: Optional[OperationResult] = None
 
             if result.results:
                 transaction = result.results[0]
             if not result.results and result.inner_result_pair:
-                inner_result_pair: InnerTransactionResultPair = result.inner_result_pair
+                inner_result_pair: InnerTransactionResultPair = (
+                    result.inner_result_pair
+                )
                 inner_result: InnerTransactionResult = inner_result_pair.result
-                inner_result_result: InnerTransactionResultResult = inner_result.result
+                inner_result_result: InnerTransactionResultResult = (
+                    inner_result.result
+                )
                 transaction = inner_result_result.results[0]
 
             if not transaction:
@@ -399,11 +589,16 @@ class StellarRepository(Repository):
             )
         except Exception as e:
             set_context('check_transaction_result_case', value=e.__dict__)
-            capture_message('Error in StellarRepository.check_transaction_result', level='error')
+            capture_message(
+                'Error in StellarRepository.check_transaction_result',
+                level='error',
+            )
             return False
 
     @staticmethod
-    def get_account_balances(raw_data: Dict[str, Any]) -> Dict[str, StellarWallet]:
+    def get_account_balances(
+        raw_data: Dict[str, Any]
+    ) -> Dict[str, StellarWallet]:
         """Returns a Dict of StellarWalletBalance objects"""
         return {
             balance.get('asset_code', 'native'): StellarWallet(**balance)
@@ -411,17 +606,20 @@ class StellarRepository(Repository):
         }
 
     @staticmethod
-    def compare_balances(stellar_wallet_balance: Decimal, ga_wallet_balance: Decimal):
+    def compare_balances(
+        stellar_wallet_balance: Decimal, ga_wallet_balance: Decimal
+    ):
         """
-            Method for comparing balances
-            @Returns: bool a parameter indicating whether it is necessary to update the balance of the stellar wallet
+        Method for comparing balances
+        @Returns: bool a parameter indicating whether it is necessary to update the balance of the stellar wallet
         """
         if stellar_wallet_balance >= ga_wallet_balance:
-            # Stellar wallet balance not needed for updating 
+            # Stellar wallet balance not needed for updating
             return False
 
-        # Stellar wallet balance needed for updating 
+        # Stellar wallet balance needed for updating
         return True
+
 
 class NoSignaturesFound(Exception):
     ...
