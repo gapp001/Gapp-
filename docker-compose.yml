@@ -24,41 +24,32 @@ services:
         max-size: 10m
     expose:
       - 6379
-    restart: unless-stopped
+    restart: always
 
   stellar_ms_celery:
     build: .
+    image: stellar_ms
     container_name: stellar_ms_celery
     command: bash -c "celery -A conf worker -l INFO"
     env_file:
       - ./.env
     depends_on:
-      # - stellar_ms_web
       - stellar_ms_redis
     restart: always
+    logging:
+      options:
+        max-size: 10m
 
   stellar_ms_celery-beat:
-    build: .
+    image: stellar_ms
     container_name: stellar_ms_celery-beat
     command: celery -A conf beat -l INFO
     env_file:
       - ./.env
     depends_on:
-      # - stellar_ms_web
       - stellar_ms_redis
+      - stellar_ms_celery
     restart: always
-
-  # dashboard:
-  #     build: .
-  #     command: celery -A conf flower --basic_auth=${FLOWER_USER}:${FLOWER_PASSWORD} --port=5555 --url_prefix=flower
-  #     ports:
-  #       - 5555:5555
-  #     environment:
-  #       CELERY_BROKER_URL: ${CELERY_BROKER_URL}
-  #       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
-  #     env_file:
-  #       - ./.env
-  #     depends_on:
-  #       # - stellar_ms_web
-  #       - stellar_ms_redis
-  #       - stellar_ms_celery
+    logging:
+      options:
+        max-size: 10m
