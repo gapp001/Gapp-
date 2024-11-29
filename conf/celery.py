@@ -151,24 +151,24 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
                         set_context('initial_accrual_stellar_accounts_task_case', value=dict(public_key=account.public_key, ))
                         capture_message('GA_USD Stellar wallet not found (initial_accrual_stellar_accounts_task_case)', level='error')
                         continue
-                    
+
                     can_update_ga_ngn_wallet_balance: bool = StellarRepository.compare_balances(
                         stellar_wallet_balance=ga_ngn_stellar_wallet.balance,
                         ga_wallet_balance=account.ngn_balance,
                     )
-                    
+
                     can_update_ga_usd_wallet_balance: bool = StellarRepository.compare_balances(
                         stellar_wallet_balance=ga_usd_stellar_wallet.balance,
                         ga_wallet_balance=account.usd_balance,
                     )
-                    
+
                     if not can_update_ga_ngn_wallet_balance and not can_update_ga_usd_wallet_balance:
                         successful_deposit_accounts.append(GAStellarAccountBoundedSchema(pk=account.pk, is_initial_accrued_money=True))
                         continue
 
                     if can_update_ga_ngn_wallet_balance:
                         # Creating Stellar transaction with gaNGN asset
-                        
+
                         ga_ngn_transaction_amount: Decimal = account.ngn_balance - ga_ngn_stellar_wallet.balance
 
                         try:
@@ -194,7 +194,7 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
                             exception_data: Dict[str, Any] = e.__dict__
 
                         if not is_ga_ngn_transaction_succeed:
-                            
+
                             set_context('initial_accrual_stellar_accounts_task_case', value=exception_data)
                             capture_message('Stellar transaction not completed (initial_accrual_stellar_accounts_task_case)', level='error')
                             # continue
@@ -202,7 +202,7 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
                         if is_ga_ngn_transaction_succeed and not can_update_ga_usd_wallet_balance:
                             # It means that this Django StellarAccount can set is_initial_accrued_money to True
                             successful_deposit_accounts.append(GAStellarAccountBoundedSchema(pk=account.pk, is_initial_accrued_money=True))
-                   
+
                     if can_update_ga_usd_wallet_balance:
                         # Creating Stellar transaction with gaUSD asset
 
@@ -247,7 +247,7 @@ def initial_accrual_stellar_accounts_task(conn: Redis | None = None):
                         access_token=credentials.access_token,
                         data=request_data, url=DjangoURLS.POST_SEND_UPDATED_BALANCES_STELLAR_ACCOUNTS
                     )
-   
+
         LOGGER.debug(f'DONE initial_accrual_stellar_accounts_task\n')
     except Exception as e:
         set_context('initial_accrual_stellar_accounts_task_case',
@@ -581,6 +581,7 @@ def send_transactions_to_stellar_task(conn=None):
                         except Exception as e:
                             # here not catched exception to Sentry because it's catched in StellarRepository.send_transaction
                             transaction_result = None
+                            LOGGER.error(exc_info=True)
                         LOGGER.debug(f'{transaction_result=}')
                         if transaction_result:
                             pipe.hset(

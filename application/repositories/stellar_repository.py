@@ -67,7 +67,7 @@ class StellarRepository(Repository):
 
     @staticmethod
     def build_transaction(
-        amount: Decimal, 
+        amount: Decimal,
         asset_code: str,
         server: Server,
     ) -> TransactionEnvelope:
@@ -108,7 +108,7 @@ class StellarRepository(Repository):
         """
 
         if wallet.balance >= settings.MIN_BALANCE_NGN:
-            return None 
+            return None
 
         transaction_envelope: TransactionEnvelope = __class__.build_transaction(
             server=server,
@@ -128,7 +128,7 @@ class StellarRepository(Repository):
         """
 
         if wallet.balance >= settings.MIN_BALANCE_USD:
-            return None 
+            return None
 
         transaction_envelope: TransactionEnvelope = __class__.build_transaction(
             server=server,
@@ -232,7 +232,7 @@ class StellarRepository(Repository):
 
     gaNGN Начисляется когда деньги пришли из Paystack
     gaNGN Начисляется когда деньги пришли из внутреннего перевода
-        
+
     ______________________________________________
 
     пока не трогаем ↓
@@ -240,8 +240,8 @@ class StellarRepository(Repository):
         1 -> 2 деньги
         1 -> переводит в Stellar тоже, но Root аккаунту
     пока не трогаем ↑
-    
-    
+
+
     """
 
     @staticmethod
@@ -306,6 +306,17 @@ class StellarRepository(Repository):
         ga_transaction_id: int | None = None,
     ) -> StellarPaymentTransactionSchema:
         """Send asset from issuing accout to receiving account"""
+
+        if settings.IS_CHECK_EXISTS_TRANSACTION and ga_transaction_id:
+            transaction_info: dict | None = __class__.check_exists_transaction(
+                transaction_id=ga_transaction_id,
+                issuer_account=issuer_account.account.account_id
+            )
+            if transaction_info:
+                response = StellarPaymentTransactionSchema(
+                    ga_transaction_id=ga_transaction_id, **transaction_info
+                )
+                return response
 
         try:
             stellar_response: Dict[
@@ -619,6 +630,57 @@ class StellarRepository(Repository):
 
         # Stellar wallet balance needed for updating
         return True
+
+    @staticmethod
+    def check_exists_transaction(
+        transaction_id: int,
+        issuer_account: str
+        ) -> dict | None:
+
+        url: str = f"{settings.SENTRY_URL}/accounts/{issuer_account}/transactions"
+
+        # Смотрим последние транзакции, max limit = 200
+        params = dict(
+            limit=settings.LIMIT_TRANSACTION_RESPONSE,
+            order='desc'
+        )
+        try:
+            response = requests.get(url=url, params=params)
+
+            result: dict | None = __class__.search_target_transaction(
+                transaction_id=transaction_id,
+                list_past_transactions=response.json()['_embedded']['records']
+                )
+            if not result:
+                LOGGER.info(
+                f'Not dublicate {transaction_id=} in stellar'
+                )
+                return None
+
+            LOGGER.debug(
+                f'Transaction with {transaction_id=} allready exists in stellar'
+                )
+            return result
+        except Exception as e:
+            capture_message(
+                f'Error in StellarRepository.check_exists_transaction__ {e}',
+                level='error'
+            )
+            LOGGER.error(
+                f'Error in StellarRepository.check_exists_transaction'
+                )
+            return None
+
+    @staticmethod
+    def search_target_transaction(
+        transaction_id: int,
+        list_past_transactions: list[dict]) -> dict | None:
+
+        for transaction in list_past_transactions:
+            memo = transaction.get("memo")
+            if memo == str(transaction_id):
+                return transaction
+        return None
 
 
 class NoSignaturesFound(Exception):
