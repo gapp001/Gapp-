@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     GA_NGN_ASSET_CODE: str = 'gaNGN'
     GA_USD_ASSET_CODE: str = 'gaUSD'
     STELLAR_BASE_FEE: int = 500
+    IS_CHECK_EXISTS_TRANSACTION: bool = True
+    LIMIT_TRANSACTION_RESPONSE: int = 30
 
     class Config:
         env_file = '.env'
@@ -77,7 +79,7 @@ def configure_logger():
     if settings.LOG_LEVEL == logging.DEBUG or settings.SENTRY_ENV != settings.PROD_SENTRY_ENV:
         LOGGER.setLevel(logging.DEBUG)
         return
-    
+
     LOGGER.setLevel(logging.NOTSET)
 
 
