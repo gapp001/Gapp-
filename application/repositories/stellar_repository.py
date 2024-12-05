@@ -648,7 +648,7 @@ class StellarRepository(Repository):
         issuer_account: str
         ) -> dict | None:
 
-        url: str = f"{settings.SENTRY_URL}/accounts/{issuer_account}/transactions"
+        url: str = f"{settings.HORIZON_URL}/accounts/{issuer_account}/transactions"
 
         # Смотрим последние транзакции, max limit = 200
         params = dict(
