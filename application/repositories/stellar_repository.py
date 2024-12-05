@@ -313,10 +313,21 @@ class StellarRepository(Repository):
                 issuer_account=issuer_account.account.account_id
             )
             if transaction_info:
-                response = StellarPaymentTransactionSchema(
-                    ga_transaction_id=ga_transaction_id, **transaction_info
-                )
-                return response
+                try:
+                    response = StellarPaymentTransactionSchema(
+                        ga_transaction_id=ga_transaction_id, **transaction_info
+                    )
+                    return response
+                except (
+                    AttributeError,
+                    ValueError,
+                ) as e:
+                    set_context('Error by creating StellarPaymentTransactionSchema', value=e.__dict__)
+                    capture_message(
+                        'Error by creating StellarPaymentTransactionSchema', level='error'
+                    )
+                    raise e
+
 
         try:
             stellar_response: Dict[
@@ -669,7 +680,7 @@ class StellarRepository(Repository):
             LOGGER.error(
                 f'Error in StellarRepository.check_exists_transaction'
                 )
-            return None
+            raise e
 
     @staticmethod
     def search_target_transaction(
