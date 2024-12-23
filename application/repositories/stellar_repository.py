@@ -34,138 +34,6 @@ class StellarRepository(Repository):
 
     FORCED_PAYMENT_MEMO = TextMemo(text='forced_payment')
 
-    @staticmethod
-    def get_user_stellar_wallets(
-        public_key: str | None, server: Server
-    ) -> list[StellarWallet] | list:
-        """
-        The method for getting user stellar wallets
-        :param: public_key: str
-        :param: server: Server
-        :return: list[StellarWallet] | list
-        """
-
-        if not public_key:
-            return []
-        try:
-            account = server.accounts().account_id(public_key).call()
-            wallets: list[dict[str, Any]] = account['balances']
-            stellar_wallets: list[StellarWallet] | list = [
-                StellarWallet(**wallet) for wallet in wallets
-            ]
-            return stellar_wallets
-
-        except Exception as error:
-            LOGGER.error(error)
-            return []
-
-    @staticmethod
-    def _get_timestamp() -> int:
-        date_now: datetime = datetime.now()
-        date_now += timedelta(hours=1)
-        return int(date_now.timestamp())
-
-    @staticmethod
-    def build_transaction(
-        amount: Decimal, 
-        asset_code: str,
-        server: Server,
-    ) -> TransactionEnvelope:
-        """
-        The method for building transaction
-        """
-        keypair = Keypair.from_secret(settings.ISSUER_SECRET_KEY)
-        source_account = server.load_account(keypair.public_key)
-        network_passphrase = __class__.get_network_passphrase()
-        transaction_envelope = (
-            TransactionBuilder(
-                source_account=source_account,
-                network_passphrase=network_passphrase,
-                base_fee=settings.STELLAR_BASE_FEE,
-            )
-            .add_text_memo('Sync root account')
-            .append_payment_op(
-                destination=settings.FAKE_ROOT_ACCOUNT,
-                asset=Asset(
-                    asset_code,
-                    issuer=keypair.public_key,
-                ),
-                amount=str(amount),
-            )
-            .set_timeout(__class__._get_timestamp())
-            .build()
-        )
-        LOGGER.info(f'Build transaction envelope: {amount}{asset_code}')
-        return transaction_envelope
-
-
-    @staticmethod
-    def sync_ga_ngn_wallet(server: Server, wallet: StellarWallet):
-        """
-        The method for syncing gaNGN wallet
-        :param: server: Server
-        :param: wallet: StellarWallet
-        """
-
-        if wallet.balance >= settings.MIN_BALANCE_NGN:
-            return None 
-
-        transaction_envelope: TransactionEnvelope = __class__.build_transaction(
-            server=server,
-            asset_code=settings.GA_NGN_ASSET_CODE,
-            amount=settings.MIN_BALANCE_NGN - wallet.balance,
-        )
-        transaction_envelope.sign(settings.ISSUER_SECRET_KEY)
-        server.submit_transaction(transaction_envelope)
-        LOGGER.info(f'Sync gaNGN wallet: {wallet.balance}')
-
-    @staticmethod
-    def sync_ga_usd_wallet(server: Server, wallet: StellarWallet):
-        """
-        The method for syncing gaUSD wallet
-        :param: server: Server
-        :param: wallet: StellarWallet
-        """
-
-        if wallet.balance >= settings.MIN_BALANCE_USD:
-            return None 
-
-        transaction_envelope: TransactionEnvelope = __class__.build_transaction(
-            server=server,
-            asset_code=settings.GA_USD_ASSET_CODE,
-            amount=settings.MIN_BALANCE_USD - wallet.balance,
-        )
-        transaction_envelope.sign(settings.ISSUER_SECRET_KEY)
-        server.submit_transaction(transaction_envelope)
-        LOGGER.info(f'Sync gaUSD wallet: {wallet.balance}')
-
-    @staticmethod
-    def update_fake_root_account() -> None:
-        """
-        The method for updating fake root account
-        """
-        server = Server(settings.HORIZON_URL)
-        wallets: list[
-            StellarWallet
-        ] | list = __class__.get_user_stellar_wallets(
-            public_key=settings.FAKE_ROOT_ACCOUNT, server=server
-        )
-        print(f'\n\n{wallets=}')
-        if not wallets:
-            LOGGER.info(f'Fake root account: {wallets}')
-            return None
-
-        for wallet in wallets:
-            match wallet.asset_code:
-                case settings.GA_NGN_ASSET_CODE:
-                    __class__.sync_ga_ngn_wallet(server=server, wallet=wallet)
-                case settings.GA_USD_ASSET_CODE:
-                    __class__.sync_ga_usd_wallet(server=server, wallet=wallet)
-                case 'native':
-                    pass
-                case _:
-                    LOGGER.info(f'Not valid wallet asset: {wallet}')
-        return None
 
     @staticmethod
     def get_network_passphrase() -> str:
@@ -233,7 +101,7 @@ class StellarRepository(Repository):
 
     gaNGN Начисляется когда деньги пришли из Paystack
     gaNGN Начисляется когда деньги пришли из внутреннего перевода
-        
+
     ______________________________________________
 
     пока не трогаем ↓
@@ -241,8 +109,8 @@ class StellarRepository(Repository):
         1 -> 2 деньги
         1 -> переводит в Stellar тоже, но Root аккаунту
     пока не трогаем ↑
-    
-    
+
+
     """
 
     @staticmethod
@@ -309,9 +177,7 @@ class StellarRepository(Repository):
         """Send asset from issuing accout to receiving account"""
 
         try:
-            stellar_response: Dict[
-                str, Any
-            ] = __class__.process_payment_operation(
+            stellar_response: Dict[str, Any] = __class__.process_payment_operation(
                 server=server,
                 amount=amount,
                 recipient_public_key=recipient_public_key,
@@ -620,7 +486,6 @@ class StellarRepository(Repository):
 
         # Stellar wallet balance needed for updating
         return True
-
 
 class NoSignaturesFound(Exception):
     ...

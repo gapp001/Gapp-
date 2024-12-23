@@ -25,35 +25,32 @@ services:
       - ./redis/data:/redis/data
       - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
       - ./redis/log:/root/redis/log
-    logging:
-      options:
-        max-size: 10m
+    <<: *logging-common
     expose:
       - 6379
-    restart: unless-stopped
-    <<: *logging-common
+    restart: always
 
   stellar_ms_celery:
     build: .
+    image: stellar_ms
     container_name: stellar_ms_celery
     command: bash -c "celery -A conf worker -l INFO"
     env_file:
       - ./.env
     depends_on:
-      # - stellar_ms_web
       - stellar_ms_redis
     restart: always
     <<: *logging-common
 
   stellar_ms_celery-beat:
-    build: .
+    image: stellar_ms
     container_name: stellar_ms_celery-beat
     command: celery -A conf beat -l INFO
     env_file:
       - ./.env
     depends_on:
-      # - stellar_ms_web
       - stellar_ms_redis
+      - stellar_ms_celery
     restart: always
     <<: *logging-common
 

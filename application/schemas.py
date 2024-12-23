@@ -22,7 +22,7 @@ class StellarPaymentTransactionSchema(BaseModel):
     operation_count: int
     envelope_xdr: str
     result_xdr: str
-    result_meta_xdr: str
+    result_meta_xdr: str | None = None
     fee_meta_xdr: str
     memo_type: str
     signatures: List[str]
