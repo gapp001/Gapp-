@@ -1,5 +1,11 @@
 version: '3.5'
 
+x-logging-common: &logging-common
+  logging:
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   # stellar_ms_web:
   #   build: .
@@ -25,6 +31,7 @@ services:
     expose:
       - 6379
     restart: unless-stopped
+    <<: *logging-common
 
   stellar_ms_celery:
     build: .
@@ -36,6 +43,7 @@ services:
       # - stellar_ms_web
       - stellar_ms_redis
     restart: always
+    <<: *logging-common
 
   stellar_ms_celery-beat:
     build: .
@@ -47,6 +55,7 @@ services:
       # - stellar_ms_web
       - stellar_ms_redis
     restart: always
+    <<: *logging-common
 
   # dashboard:
   #     build: .

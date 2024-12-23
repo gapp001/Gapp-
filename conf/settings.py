@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # Django API authentication cofigurations
     DJANGO_DOMAIN: str
     STELLAR_MICROSERVICE_LOGIN: str
-    STELLAR_MICROSERVICE_PASSWORD: str
+    STELLAR_MICROSERVICE_PASSWORD: str = 'did'
 
     # Celery cofigurations
     CELERY_BROKER_URL: str
@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     # Logging configurations
     LOG_LEVEL: int = logging.NOTSET
 
+    FAKE_ROOT_ACCOUNT: str
+    MIN_BALANCE_USD: int
+    MIN_BALANCE_NGN: int
+    GA_NGN_ASSET_CODE: str = 'gaNGN'
+    GA_USD_ASSET_CODE: str = 'gaUSD'
+    STELLAR_BASE_FEE: int = 500
 
     class Config:
         env_file = '.env'

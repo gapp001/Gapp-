@@ -1,19 +1,23 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Union
-from requests import Session, Response, HTTPError
 
-from application.schemas import DjangoAuthCredentials, GAStellarAccountSchema, GATransactionSchema
+from requests import HTTPError, Response, Session
+from sentry_sdk import capture_message, set_context
+
+from application.choices import (StellarTransactionStatus, TransactionKind,
+                                 TransactionStatus)
+from application.schemas import (DjangoAuthCredentials, GAStellarAccountSchema,
+                                 GATransactionSchema)
 from conf.settings import settings
-from application.choices import StellarTransactionStatus, TransactionStatus, TransactionKind
+
 from .repository import Repository
-from sentry_sdk import set_context, capture_message
 
 
 @dataclass
 class DjangoURLS:
     GET_STELLAR_ACCOUNTS_LIST: str = '/stellar/account-list/'
     GET_STELLAR_ACCOUNTS_LIST_WITH_BALANCES: str = '/stellar/account-balances-list/'
-    
+
     POST_SEND_UPDATED_STELLAR_ACCOUNTS_STATUS: str = '/stellar/account-list/update-status/'
     POST_SEND_UPDATED_BALANCES_STELLAR_ACCOUNTS: str = '/stellar/account-list/update-accounts/'
 
@@ -129,10 +133,10 @@ class DjangoRepository(Repository):
 
         elif url == DjangoURLS.POST_SEND_UPDATED_BALANCES_STELLAR_ACCOUNTS:
             url = f'{settings.DJANGO_DOMAIN}{DjangoURLS.POST_SEND_UPDATED_BALANCES_STELLAR_ACCOUNTS}'
-        
+
         else:
             raise ValueError('Passed unexpected URL')
-        
+
         try:
             response = session.post(
                 url=url,
@@ -144,12 +148,15 @@ class DjangoRepository(Repository):
             return response.status_code
         except HTTPError as e:
             set_context('send_updated_stellar_accounts_case', value=e.__dict__)
-            capture_message('Error in DjangoRepository.send_updated_stellar_accounts', level='error')
+            capture_message(
+                'Error in DjangoRepository.send_updated_stellar_accounts', level='error')
             raise e
 
-    def get_transactions(session: Session,
-                         timeout: float,
-                         access_token: str) -> List[GATransactionSchema]:
+    def get_transactions(
+            session: Session,
+            timeout: float,
+            access_token: str
+    ) -> List[GATransactionSchema]:
         """
             Method for retrieving transactions list with transaction.status is "in_processing" 
             and transaction.stellar_status is "unconfirmed"
@@ -167,5 +174,3 @@ class DjangoRepository(Repository):
             capture_message(
                 'Error in DjangoRepository.get_transactions', level='error')
             raise e
-
-
