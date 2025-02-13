@@ -46,7 +46,7 @@ from conf.settings import settings
 #                                  timeout: float,
 #                                  access_token: str) -> List[GATransactionSchema]:
 #     '''
-#     Функция получения списка транзакций из give_away django api.
+#     A function to retrieve a list of transactions from the give_away Django API.
 #     '''
 #     response = session.get(
 #         url=f'{settings.DJANGO_DOMAIN}/transaction/',
@@ -68,10 +68,10 @@ from conf.settings import settings
 #                            base_fee: int,
 #                            asset: Asset) -> None:
 #     '''
-#     Create a trustline between receiving account and issuing account for asset.
-#     Функция для создания линии доверия между эмитентом и получателем.
-#     Подразумевается, что линия доверия должна создаваться сразу
-#     после создании аккаунта и подписываться созданным пользователем.
+#     Create a trustline between receiving account and issuing account for asset
+#     A function to create a trustline between the issuer and the recipient
+#     The function is meant to create the trustline immediately after the account is created
+#     After the account is created, it should be signed by the newly created user.
 #     '''
 #     # Fetch the current sequence number for the source account from Horizon.
 #     receiver = server.load_account(receiving_keypair.public_key)
@@ -101,9 +101,9 @@ from conf.settings import settings
 #                                   base_fee: int,
 #                                   asset: Asset) -> Keypair:
 #     '''
-#     Проверяем, есть ли у получателя публичный ключ Stellar.
-#     Если нет, то создаем для получаетля новый аккаунт,
-#     пополняем его и создаем линию доверия к нашему активу gaNGN.
+#     We check if the recipient has a Stellar public key.
+#     If not, we create a new account for the recipient,
+#     We fund the account and create a trustline to our asset, gaNGN.
 #     '''
 #     receiving_public_key = stellar_public_key
 #     if not receiving_public_key:
