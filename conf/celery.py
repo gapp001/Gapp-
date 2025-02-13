@@ -304,7 +304,7 @@ def get_stellar_accounts_from_django_task(conn: Redis | None = None):
                     for account in stellar_accounts:
                         can_skip_create_operation: bool = False
 
-                        # проверь kiss cache
+                        # check kiss cache
                         existing_account: Account | None = StellarRepository.get_account(
                             server=server,
                             public_key=account.public_key)
@@ -538,22 +538,22 @@ def send_transactions_to_stellar_task(conn=None):
                 access_token=credentials.access_token
             )
             if transactions:
-                # Подключились к серверу Stellar
+                # We connected to the server Stellar
                 server = Server(horizon_url=settings.HORIZON_URL)
                 # Fetch issuing keypair from secret key.
-                # Получили пару ключей инициатора - Root Аккаунт
+                # We received a pair of keys: the initiator and the Root Account
                 issuer_keypair = Keypair.from_secret(
                     secret=settings.ISSUER_SECRET_KEY)
                 # Fetch the current sequence number for the source account from Horizon.
-                # Получаем по публичному ключу данные аккаунта
+                # We retrieve the account data using the public key
                 issuer_account = server.load_account(issuer_keypair.public_key)
 
                 # Fetch the current base fee for the transaction
-                # Получаем минимальную комиисию за транзакцию
+                # We retrieve the minimum transaction fee
                 base_fee = server.fetch_base_fee()
 
                 # Create an object to represent the new asset
-                # Получаем валюту GA coin TODO разберись
+                # We retrieve the GA coin currency. TODO: investigate
 
                 with conn.pipeline(transaction=True) as pipe:
                     for ga_transaction in transactions:
