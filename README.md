@@ -1,16 +1,16 @@
 # give-away-stellar-microservice
 
-### Локальное развертывание
+### Local deployment.
 ```bash 
 python3.10 -m venv .venv
 source .venv/bin/activate
 poetry install
 ```
 
-* Cоздать .env файл
-* Подтянуть переменные виртуального окружения в .env файл (пример находится в .env.example)
+* Create a .env file.
+* Pull the environment variables into the .env file (an example can be found in .env.example).
 
-### Локальный запуск
+### Local startup.
 ```bash 
 celery -A conf worker -l INFO
 uvicorn application.main:app --reload
