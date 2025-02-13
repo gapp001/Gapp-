@@ -90,25 +90,25 @@ class StellarRepository(Repository):
             return None
 
     """
-    создали keypauir
+    They created a keypair.
 
-    создаем Stellar аккаунт, когда ему впервые начисляют деньги
+    We create a Stellar account when money is first credited to it.
 
-    смотрим, что есть транзакция, что деньги есть, находим его StellarAccount
+    We check if there is a transaction, verify that the money is there, and find its StellarAccount.
 
-    Микросервис его получает, содаетс аккаунт, начисляет деньги 2люмена, создаем линию доверия, переводим N gaNGN
+    The microservice receives it, creates the account, credits 2 lumens, creates a trustline, and transfers N gaNGN.
     ______________________________________________
 
-    gaNGN Начисляется когда деньги пришли из Paystack
-    gaNGN Начисляется когда деньги пришли из внутреннего перевода
+    gaNGN is credited when the money arrives from Paystack.
+    gaNGN is credited when the money arrives from an internal transfer.
 
     ______________________________________________
 
-    пока не трогаем ↓
-        переводим тому, у кого есть только Keypair
-        1 -> 2 деньги
-        1 -> переводит в Stellar тоже, но Root аккаунту
-    пока не трогаем ↑
+    We don't touch this yet ↓  
+        We transfer to the one who only has the Keypair:  
+        1 -> 2 money  
+        1 -> also transfers in Stellar, but to the Root account  
+We don't touch this yet ↑
 
 
     """
@@ -319,7 +319,7 @@ class StellarRepository(Repository):
     #                      asset: Asset) -> TransactionResultSchema:
     #     '''
     #     Send asset from issuing accout to receiving account.
-    #     Основная функция, которая создает, подписывает и отправляет транзакцию в сеть Stellar.
+    #     The main function that creates, signs, and sends a transaction to the Stellar network.
     #     '''
     #     # receiving_keypair = cls.create_stellar_account(
     #     #     receiving_public_key=transaction.related_user.stellar_public_key,
@@ -378,9 +378,9 @@ class StellarRepository(Repository):
     ) -> None:
         """
         Create a trustline between receiving account and issuing account for asset.
-        Функция для создания линии доверия между эмитентом и получателем.
-        Подразумевается, что линия доверия должна создаваться сразу
-        после создании аккаунта и подписываться созданным пользователем.
+        A function to create a trustline between the issuer and the recipient.  
+        It is assumed that the trustline should be created immediately 
+        after the account is created and signed by the newly created user.
         """
         # Fetch the current sequence number for the source account from Horizon.
         recipient_account: Account | None = __class__.get_account(
